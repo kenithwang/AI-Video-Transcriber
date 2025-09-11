@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-AI视频转录器启动脚本
+AI视频转录器启动脚本（已弃用）
+
+注意：项目已切换为 CLI 模式并使用 Gemini 服务。此脚本仅用于旧版 Web 演示，
+与当前 CLI 流程无关。请使用 `python3 cli.py` 运行命令行版本。
 """
 
 import os
@@ -74,7 +77,8 @@ def setup_environment():
     print("🔑 OpenAI API已配置，摘要功能可用")
 
 def main():
-    """主函数"""
+    """主函数（Web 旧版入口，不再推荐）"""
+    print("[deprecated] Web 启动脚本已弃用。请使用 CLI：python3 cli.py")
     # 检查是否使用生产模式（禁用热重载）
     production_mode = "--prod" in sys.argv or os.getenv("PRODUCTION_MODE") == "true"
     

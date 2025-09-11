@@ -1,32 +1,36 @@
 import os
-import openai
 import logging
 from typing import Optional
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
 class Summarizer:
-    """文本总结器，使用OpenAI API生成多语言摘要"""
+    """文本整理/摘要器，使用 Gemini 生成多语言内容"""
     
     def __init__(self):
         """初始化总结器"""
-        # 从环境变量获取OpenAI API配置
-        api_key = os.getenv("OPENAI_API_KEY")
-        base_url = os.getenv("OPENAI_BASE_URL")
-        
+        # 配置 Gemini API
+        api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            logger.warning("未设置OPENAI_API_KEY环境变量，将无法使用摘要功能")
-        
-        if api_key:
-            if base_url:
-                self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
-                logger.info(f"OpenAI客户端已初始化，使用自定义端点: {base_url}")
-            else:
-                self.client = openai.OpenAI(api_key=api_key)
-                logger.info("OpenAI客户端已初始化，使用默认端点")
+            logger.warning("未设置 GEMINI_API_KEY 环境变量，将无法使用优化/摘要功能")
+            self.enabled = False
         else:
-            self.client = None
+            genai.configure(api_key=api_key)
+            self.enabled = True
         
+        # 模型名（可通过环境变量调整）
+        base_model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        self.optimize_model = os.getenv("GEMINI_OPTIMIZE_MODEL", os.getenv("GEMINI_SUMMARY_MODEL", base_model))
+        self.summary_model = os.getenv("GEMINI_SUMMARY_MODEL", base_model)
+        # Normalize to plain model name (strip any 'models/' prefix)
+        def _norm(name: str) -> str:
+            return name.split("/", 1)[-1] if name.startswith("models/") else name
+        self.optimize_model = _norm(self.optimize_model)
+        self.summary_model = _norm(self.summary_model)
+        logger.info(f"Gemini optimize model: {self.optimize_model}")
+        logger.info(f"Gemini summary model: {self.summary_model}")
+
         # 支持的语言映射
         self.language_map = {
             "en": "English",
@@ -54,8 +58,8 @@ class Summarizer:
             优化后的转录文本（Markdown格式）
         """
         try:
-            if not self.client:
-                logger.warning("OpenAI API不可用，返回原始转录")
+            if not self.enabled:
+                logger.warning("Gemini API 不可用，返回原始转录")
                 return raw_transcript
 
             # 预处理：仅移除时间戳与元信息，保留全部口语/重复内容
@@ -162,17 +166,12 @@ class Summarizer:
 
 请特别注意修复因时间戳分割导致的句子不完整问题，并进行合理的段落划分！"""
 
-        response = self.client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_tokens=4000,  # 对齐JS：优化/格式化阶段最大tokens≈4000
-            temperature=0.1
+        model = genai.GenerativeModel(self.optimize_model)
+        response = model.generate_content(
+            [f"System: {system_prompt}", f"User: {user_prompt}"],
+            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4000),
         )
-        
-        return response.choices[0].message.content
+        return response.text or ""
 
     async def _optimize_with_chunks(self, raw_transcript: str, max_tokens: int) -> str:
         """
@@ -210,17 +209,12 @@ class Summarizer:
 输出清理后的文本，保持原文结构。"""
 
             try:
-                response = self.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=1200,  # 适应4000 tokens总限制
-                    temperature=0.1
+                model = genai.GenerativeModel(self.optimize_model)
+                response = model.generate_content(
+                    [f"System: {system_prompt}", f"User: {user_prompt}"],
+                    generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=1200),
                 )
-                
-                optimized_chunk = response.choices[0].message.content
+                optimized_chunk = response.text or ""
                 optimized_chunks.append(optimized_chunk)
                 
             except Exception as e:
@@ -298,16 +292,12 @@ class Summarizer:
             )
 
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=4000,  # 对齐JS：优化/格式化阶段最大tokens≈4000
-                temperature=0.1
+            model = genai.GenerativeModel(self.optimize_model)
+            response = model.generate_content(
+                [f"System: {system_prompt}", f"User: {prompt}"],
+                generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4000),
             )
-            optimized_text = response.choices[0].message.content or ""
+            optimized_text = response.text or ""
             # 移除诸如 "# Transcript" / "## Transcript" 等标题
             optimized_text = self._remove_transcript_heading(optimized_text)
             enforced = self._enforce_paragraph_max_chars(optimized_text.strip(), max_chars=400)
@@ -970,8 +960,8 @@ Core requirements:
             摘要文本（Markdown格式）
         """
         try:
-            if not self.client:
-                logger.warning("OpenAI API不可用，生成备用摘要")
+            if not self.enabled:
+                logger.warning("Gemini API 不可用，生成备用摘要")
                 return self._generate_fallback_summary(transcript, target_language, video_title)
             
             # 估算转录文本长度，决定是否需要分块摘要
@@ -1033,17 +1023,12 @@ Requirements:
         logger.info(f"正在生成{language_name}摘要...")
         
         # 调用OpenAI API
-        response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_tokens=3500,  # 控制在安全范围内，避免超出模型限制
-            temperature=0.3
+        model = genai.GenerativeModel(self.summary_model)
+        response = model.generate_content(
+            [f"System: {system_prompt}", f"User: {user_prompt}"],
+            generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=3500),
         )
-        
-        summary = response.choices[0].message.content
+        summary = response.text or ""
 
         return self._format_summary_with_meta(summary, target_language, video_title)
 
@@ -1076,17 +1061,12 @@ Output preferences: Focus on natural paragraphs, use minimal bullet points if ne
 Avoid using any subheadings or decorative separators, output content only."""
 
             try:
-                response = self.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=1000,  # 提升分块摘要容量以涵盖更多细节
-                    temperature=0.3
+                model = genai.GenerativeModel(self.summary_model)
+                response = model.generate_content(
+                    [f"System: {system_prompt}", f"User: {user_prompt}"],
+                    generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=1000),
                 )
-                
-                chunk_summary = response.choices[0].message.content
+                chunk_summary = response.text or ""
                 chunk_summaries.append(chunk_summary)
                 
             except Exception as e:
@@ -1203,16 +1183,12 @@ Requirements:
         return prefix + summary
 
         try:
-            resp = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=1200,
-                temperature=0.2,
+            model = genai.GenerativeModel(self.summary_model)
+            resp = model.generate_content(
+                [f"System: {system_prompt}", f"User: {user_prompt}"],
+                generation_config=genai.types.GenerationConfig(temperature=0.2, max_output_tokens=1200),
             )
-            return resp.choices[0].message.content
+            return resp.text or text
         except Exception:
             return text
     

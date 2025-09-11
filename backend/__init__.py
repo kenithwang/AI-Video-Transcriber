@@ -1,1 +1,2 @@
-# AI视频转录器后端模块
+"""Backend package for AI-Video-Transcriber (CLI pipeline + modules)."""
+

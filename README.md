@@ -13,24 +13,24 @@ An AI-powered video transcription and summarization tool that supports multiple 
 ## ✨ Features
 
 - 🎥 **Multi-Platform Support**: Works with YouTube, Tiktok, Bilibili, and 30+ more
-- 🗣️ **Intelligent Transcription**: High-accuracy speech-to-text using Faster-Whisper
+- 🗣️ **Intelligent Transcription**: Cloud transcription via Gemini (`gemini-2.5-pro`)
 - 🤖 **AI Text Optimization**: Automatic typo correction, sentence completion, and intelligent paragraphing
 - 🌍 **Multi-Language Summaries**: Generate intelligent summaries in multiple languages
 - ⚡ **Real-Time Progress**: Live progress tracking and status updates
-- ⚙️ **Conditional Translation**: When the selected summary language differs from the detected transcript language, the system auto-translates with GPT‑4o
+- ⚙️ **Conditional Translation**: When the selected summary language differs from the detected transcript language, the system auto-translates with Gemini
 - 📱 **Mobile-Friendly**: Perfect support for mobile devices
 
-## 🚀 Quick Start
+## 🚀 Quick Start (CLI)
 
 ### Prerequisites
 
 - Python 3.8+
 - FFmpeg
-- Optional: OpenAI API key (for AI summary features)
+- Gemini API key (required for cloud transcription/optimization/summary/translation)
 
 ### Installation
 
-#### Method 1: Automatic Installation
+#### Method 1: Automatic Installation (Recommended + CLI)
 
 ```bash
 # Clone the repository
@@ -40,23 +40,24 @@ cd AI-Video-Transcriber
 # Run installation script
 chmod +x install.sh
 ./install.sh
+
+# Run CLI (interactive or with args)
+python3 cli.py --help
+python3 cli.py --url "<video_url>" --lang en
 ```
 
-#### Method 2: Docker
+#### Method 2: Docker (if you still need the Web app)
 
 ```bash
 # Clone the repository
 git clone https://github.com/wendy7756/AI-Video-Transcriber.git
 cd AI-Video-Transcriber
 
-# Using Docker Compose (easiest)
-cp .env.example .env
-# Edit .env file and set your OPENAI_API_KEY
-docker-compose up -d
+# (Deprecated) Web/Docker usage has been removed; use the CLI instead.
 
 # Or using Docker directly
 docker build -t ai-video-transcriber .
-docker run -p 8000:8000 -e OPENAI_API_KEY="your_api_key_here" ai-video-transcriber
+docker run -p 8000:8000 -e GEMINI_API_KEY="your_api_key_here" ai-video-transcriber
 ```
 
 #### Method 3: Manual Installation
@@ -84,59 +85,93 @@ sudo yum install ffmpeg
 
 3. **Configure Environment Variables**
 ```bash
-# Required for AI summary/translation features
-export OPENAI_API_KEY="your_api_key_here"
+# Required for cloud transcription/optimization
+export GEMINI_API_KEY="your_api_key_here"
 
-# Optional: only if you use a custom OpenAI-compatible gateway
+# Optional: additional env in `.env` (see below)
 
-### Start the Service
-
-```bash
-python3 start.py
-```
-
-After the service starts, open your browser and visit `http://localhost:8000`
-
-#### Production Mode (Recommended for long videos)
-
-To avoid SSE disconnections during long processing, start in production mode (hot-reload disabled):
+### Use the CLI
 
 ```bash
-python3 start.py --prod
+# Interactive:
+python3 cli.py
+
+# Non-interactive:
+python3 cli.py --url "<video_url>" --lang en --outdir temp
+
+### CLI Options
+
+- `--url`: Video URL (YouTube/Bilibili/etc.). If omitted, prompts interactively.
+- `--lang`: Target language for summary/translation. Default: `zh`.
+- `--outdir`: Output directory. Default: `temp`.
+- `--no-optimize`: Skip AI transcript optimization (use raw transcript).
+- `--no-translate`: Skip translation even if languages differ.
+- `--no-summary`: Skip summary generation.
+- `--with-summary`: Enable summary generation (off by default).
+- `--keep-audio`: Keep downloaded audio after processing (default: delete).
+- `--stt-model`: Transcription model override (e.g., `gemini-2.5-pro`, `gemini-1.5-pro`).
+- `--summary-model`: Model for summary (and default for optimization). Default: `gemini-2.5-pro`.
+- `--optimize-model`: Model for optimization (overrides `--summary-model` for optimization only).
+- `--translate-model`: Model for translation. Default: `gemini-2.5-pro`.
+
+The CLI auto-loads environment from a `.env` file in the working directory if present.
+
+### Defaults
+
+- Transcription: Gemini `gemini-2.5-pro` (`GEMINI_TRANSCRIBE_MODEL` or `GEMINI_MODEL`).
+- Optimization: enabled by default using `gemini-2.5-pro` (can change via `--optimize-model` or `GEMINI_OPTIMIZE_MODEL`).
+- Translation: conditional; runs only if detected language != `--lang` and not `--no-translate`.
+- Summary: disabled by default; enable with `--with-summary` (model `GEMINI_SUMMARY_MODEL`, default `gemini-2.5-pro`).
+- Output directory: `temp/` (change with `--outdir`).
+- Target language: `zh` (change with `--lang`).
+- Audio file: deleted after processing by default; keep with `--keep-audio`.
+- Environment: `.env` auto-loaded (no need to export manually).
+
+Transcription flow:
+- Downloads best audio, converts to 16kHz mono.
+- Splits audio with silence-aligned chunks targeting 300s (±5s around split), avoids cutting mid-sentence.
+- Sends each chunk to Gemini; tries audio-first/prompt-first and upload_file fallback; concatenates raw text.
+- Logs file size in MB (one decimal) and duration as `xx min yy s`.
+- On completion, automatically cleans non-Markdown temp files (keeps only `.md`).
+
+### Common Examples
+
+- Interactive (paste URL when prompted):
+  - `python3 cli.py`
+- Quick run (Chinese summary language, no summary generated):
+  - `python3 cli.py --url "<video_url>" --lang zh`
+- Keep audio file for reuse:
+  - `python3 cli.py --url "<video_url>" --keep-audio`
+- Force generate summary as well:
+  - `python3 cli.py --url "<video_url>" --with-summary`
 ```
 
-This keeps the SSE connection stable throughout long tasks (30–60+ min).
+Notes:
+- You must set `GEMINI_API_KEY` to run the pipeline (cloud transcription).
+- `GEMINI_MODEL` defaults to `gemini-2.5-pro` and can be overridden per stage.
 
-#### Run with explicit env (example)
+## 📖 Usage Guide (CLI)
 
-```bash
-source .venv/bin/activate
-export OPENAI_API_KEY=your_api_key_here
-# export OPENAI_BASE_URL=https://oneapi.basevec.com/v1   # if using a custom endpoint
-python3 start.py --prod
-```
-
-## 📖 Usage Guide
-
-1. **Enter Video URL**: Paste a video link from YouTube, Bilibili, or other supported platforms
-2. **Select Summary Language**: Choose the language for the generated summary
-3. **Start Processing**: Click the "Start" button
-4. **Monitor Progress**: Watch real-time progress through multiple stages:
+1. **Enter Video URL**: Run `python3 cli.py` and paste URL when prompted, or pass via `--url`
+2. **Select Summary Language**: Use `--lang` (default `zh`)
+3. **Processing Stages**: The CLI will run:
+4. **Progress**: The terminal shows live stages and percentage:
    - Video download and parsing
-   - Audio transcription with Faster-Whisper
+   - Audio transcription with Gemini (cloud)
    - AI-powered transcript optimization (typo correction, sentence completion, intelligent paragraphing)
    - AI summary generation in selected language
-5. **View Results**: Review the optimized transcript and intelligent summary
-   - If transcript language ≠ selected summary language, a third tab “Translation” is shown containing a translated transcript
-6. **Download Files**: Click download buttons to save Markdown-formatted files (Transcript / Translation / Summary)
+5. **Results**: Check Markdown files under `temp/`:
+   - `raw_{title}_{id}.md` (raw transcript)
+   - `transcript_{title}_{id}.md` (optimized transcript)
+   - `summary_{title}_{id}.md` (summary)
+   - `translation_{title}_{id}.md` (if triggered)
 
 ## 🛠️ Technical Architecture
 
-### Backend Stack
-- **FastAPI**: Modern Python web framework
+### CLI Stack
 - **yt-dlp**: Video downloading and processing
-- **Faster-Whisper**: Efficient speech transcription
-- **OpenAI API**: Intelligent text summarization
+- **FFmpeg**: Audio extraction, resampling, silence detection, chunking
+- **Gemini (google-generativeai)**: Transcription, optimization, translation, optional summary
 
 ### Frontend Stack
 - **HTML5 + CSS3**: Responsive interface design
@@ -144,66 +179,51 @@ python3 start.py --prod
 - **Marked.js**: Markdown rendering
 - **Font Awesome**: Icon library
 
-### Project Structure
+### Project Structure (CLI-related)
 ```
 AI-Video-Transcriber/
-├── backend/                 # Backend code
-│   ├── main.py             # FastAPI main application
-│   ├── video_processor.py  # Video processing module
-│   ├── transcriber.py      # Transcription module
-│   ├── summarizer.py       # Summary module
-│   └── translator.py       # Translation module
-├── static/                 # Frontend files
-│   ├── index.html          # Main page
-│   └── app.js              # Frontend logic
-├── temp/                   # Temporary files directory
-├── Dockerfile              # Docker image configuration
-├── docker-compose.yml      # Docker Compose configuration
-├── .dockerignore           # Docker ignore rules
-├── .env.example            # Environment variables template
-├── requirements.txt        # Python dependencies
-├── start.py               # Startup script
-└── README.md              # Project documentation
+├── backend/
+│   ├── pipeline.py        # Shared processing pipeline for CLI
+│   ├── video_processor.py # Video download
+│   ├── cloud_transcriber.py # Cloud transcription (Gemini)
+│   ├── summarizer.py      # Optimization & summary
+│   └── translator.py      # Translation
+├── cli.py                 # CLI entrypoint
+├── temp/                  # Output directory (configurable)
+├── .env.example           # Environment variables template
+├── requirements.txt       # Dependencies
+└── install.sh             # Installation script
 ```
 
-## ⚙️ Configuration Options
+## ⚙️ Configuration
 
-### Environment Variables
+Environment Variables (auto-loaded from `.env`):
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `OPENAI_API_KEY` | OpenAI API key | - | Yes (for AI features) |
-| `HOST` | Server address | `0.0.0.0` | No |
-| `PORT` | Server port | `8000` | No |
-| `WHISPER_MODEL_SIZE` | Whisper model size | `base` | No |
-
-### Whisper Model Size Options
-
-| Model | Parameters | English-only | Multilingual | Speed | Memory Usage |
-|-------|------------|--------------|--------------|-------|--------------|
-| tiny | 39 M | ✓ | ✓ | Fast | Low |
-| base | 74 M | ✓ | ✓ | Medium | Low |
-| small | 244 M | ✓ | ✓ | Medium | Medium |
-| medium | 769 M | ✓ | ✓ | Slow | Medium |
-| large | 1550 M | ✗ | ✓ | Very Slow | High |
+- `GEMINI_API_KEY`: Gemini API key. Required.
+- `GEMINI_MODEL`: Default model for all stages. Default: `gemini-2.5-pro`.
+- `GEMINI_TRANSCRIBE_MODEL`: Model for transcription (fallback to `GEMINI_MODEL`).
+- `GEMINI_SUMMARY_MODEL`: Model for summary (fallback to `GEMINI_MODEL`).
+- `GEMINI_OPTIMIZE_MODEL`: Model for optimization (fallback to `GEMINI_SUMMARY_MODEL` then `GEMINI_MODEL`).
+- `GEMINI_TRANSLATE_MODEL`: Model for translation (fallback to `GEMINI_MODEL`).
+- `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`: Optional proxies.
+- `YT_DLP_PROXY`: Proxy specifically for yt-dlp.
 
 ## 🔧 FAQ
 
 ### Q: Why is transcription slow?
-A: Transcription speed depends on video length, Whisper model size, and hardware performance. Try using smaller models (like tiny or base) to improve speed.
+A: Transcription speed depends on video length, your network, and service latency. Shorter audio and stable network improve speed.
 
 ### Q: Which video platforms are supported?
 A: All platforms supported by yt-dlp, including but not limited to: YouTube, TikTok, Facebook, Instagram, Twitter, Bilibili, Youku, iQiyi, Tencent Video, etc.
 
 ### Q: What if the AI optimization features are unavailable?
-A: Both transcript optimization and summary generation require an OpenAI API key. Without it, the system provides the raw transcript from Whisper and a simplified summary.
+A: Cloud features require a valid Gemini API key. Without it, the pipeline cannot run.
 
 ### Q: I get HTTP 500 errors when starting/using the service. Why?
 A: In most cases this is an environment configuration issue rather than a code bug. Please check:
 - Ensure a virtualenv is activated: `source .venv/bin/activate`
 - Install deps inside the venv: `pip install -r requirements.txt`
-- Set `OPENAI_API_KEY` (required for summary/translation)
-- If using a custom gateway, set `OPENAI_BASE_URL` correctly and ensure network access
+- Set `GEMINI_API_KEY` (required for transcription/optimization)
 - Install FFmpeg: `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Debian/Ubuntu)
 - If port 8000 is occupied, stop the old process or change `PORT`
 
@@ -211,67 +231,12 @@ A: In most cases this is an environment configuration issue rather than a code b
 A: The system can process videos of any length, but processing time will increase accordingly. For very long videos, consider using smaller Whisper models.
 
 ### Q: How to use Docker for deployment?
-A: Docker provides the easiest deployment method:
-
-**Prerequisites:**
-- Install Docker Desktop from https://www.docker.com/products/docker-desktop/
-- Ensure Docker service is running
-
-**Quick Start:**
-```bash
-# Clone and setup
-git clone https://github.com/wendy7756/AI-Video-Transcriber.git
-cd AI-Video-Transcriber
-cp .env.example .env
-# Edit .env file to set your OPENAI_API_KEY
-
-# Start with Docker Compose (recommended)
-docker-compose up -d
-
-# Or build and run manually
-docker build -t ai-video-transcriber .
-docker run -p 8000:8000 --env-file .env ai-video-transcriber
-```
-
-**Common Docker Issues:**
-- **Port conflict**: Change port mapping `-p 8001:8000` if 8000 is occupied
-- **Permission denied**: Ensure Docker Desktop is running and you have proper permissions
-- **Build fails**: Check disk space (need ~2GB free) and network connection
-- **Container won't start**: Verify .env file exists and contains valid OPENAI_API_KEY
-
-**Docker Commands:**
-```bash
-# View running containers
-docker ps
-
-# Check container logs
-docker logs ai-video-transcriber-ai-video-transcriber-1
-
-# Stop service
-docker-compose down
-
-# Rebuild after changes
-docker-compose build --no-cache
-```
+This project is CLI-first. Docker and Web deployment are deprecated; prefer running the CLI directly.
 
 ### Q: What are the memory requirements?
 A: Memory usage varies depending on the deployment method and workload:
 
-**Docker Deployment:**
-- **Base memory**: ~128MB for idle container
-- **During processing**: 500MB - 2GB depending on video length and Whisper model
-- **Docker image size**: ~1.6GB disk space required
-- **Recommended**: 4GB+ RAM for smooth operation
-
-**Traditional Deployment:**
-- **Base memory**: ~50-100MB for FastAPI server
-- **Whisper models memory usage**:
-  - `tiny`: ~150MB
-  - `base`: ~250MB  
-  - `small`: ~750MB
-  - `medium`: ~1.5GB
-  - `large`: ~3GB
-- **Peak usage**: Base + Model + Video processing (~500MB additional)
+This CLI streams audio to Gemini; no local model memory is required. Typical RAM usage stays modest (hundreds of MB) during download and conversion.
 
 **Memory Optimization Tips:**
 ```bash
@@ -305,8 +270,8 @@ A: If you encounter network-related errors during video downloading or API calls
 # Test video platform access
 curl -I https://www.youtube.com/
 
-# Test OpenAI API access (replace with your endpoint)
-curl -I https://api.openai.com
+# Verify general network connectivity to Google services if needed
+curl -I https://www.google.com
 
 # Test Docker Hub access
 docker pull hello-world
@@ -315,9 +280,8 @@ docker pull hello-world
 ## 🎯 Supported Languages
 
 ### Transcription
-- Supports 100+ languages through Whisper
-- Automatic language detection
-- High accuracy for major languages
+- Multilingual transcription via Gemini
+- Automatic language hints and robust recognition
 
 ### Summary Generation
 - English
@@ -362,7 +326,7 @@ We welcome Issues and Pull Requests!
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Powerful video downloading tool
 - [Faster-Whisper](https://github.com/guillaumekln/faster-whisper) - Efficient Whisper implementation
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
-- [OpenAI](https://openai.com/) - Intelligent text processing API
+- [Google AI Gemini](https://ai.google.dev/) - Generative AI API
 
 ## 📞 Contact
 

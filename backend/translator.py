@@ -1,16 +1,17 @@
 import logging
-from openai import OpenAI
 from typing import Optional
 import re
+import os
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
 class Translator:
-    """文本翻译器，使用GPT-4o进行高质量翻译"""
+    """文本翻译器，使用 Gemini 进行高质量翻译"""
     
     def __init__(self):
         self.client = None
-        self._init_openai_client()
+        self._init_gemini_client()
         
         # 语言映射
         self.language_map = {
@@ -29,25 +30,18 @@ class Translator:
             "hi": "हिन्दी"
         }
     
-    def _init_openai_client(self):
-        """初始化OpenAI客户端"""
+    def _init_gemini_client(self):
+        """初始化 Gemini 客户端"""
         try:
-            import os
-            api_key = os.getenv("OPENAI_API_KEY")
-            base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-            
+            api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                logger.warning("未设置OPENAI_API_KEY环境变量")
+                logger.warning("未设置 GEMINI_API_KEY 环境变量")
                 return
-                
-            self.client = OpenAI(
-                api_key=api_key,
-                base_url=base_url
-            )
-            logger.info("OpenAI客户端初始化成功")
-            
+            genai.configure(api_key=api_key)
+            self.client = True
+            logger.info("Gemini 客户端初始化成功")
         except Exception as e:
-            logger.error(f"初始化OpenAI客户端失败: {str(e)}")
+            logger.error(f"初始化 Gemini 客户端失败: {str(e)}")
             self.client = None
     
     def _detect_source_language(self, text: str) -> str:
@@ -193,17 +187,18 @@ class Translator:
 只返回翻译结果，不要添加任何说明。"""
 
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_tokens=4000,
-                temperature=0.1
+            _base = os.getenv("GEMINI_TRANSLATE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
+            model_name = _base.split("/", 1)[-1] if _base.startswith("models/") else _base
+            model = genai.GenerativeModel(model_name)
+            logger.info(f"Gemini translate model: {model_name}")
+            response = model.generate_content(
+                [f"System: {system_prompt}", f"User: {user_prompt}"],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=4000,
+                ),
             )
-            
-            return response.choices[0].message.content
+            return response.text
             
         except Exception as e:
             logger.error(f"单文本翻译失败: {e}")
@@ -237,17 +232,18 @@ class Translator:
 只返回翻译结果。"""
 
             try:
-                response = self.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=4000,
-                    temperature=0.1
+                _base = os.getenv("GEMINI_TRANSLATE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
+                model_name = _base.split("/", 1)[-1] if _base.startswith("models/") else _base
+                model = genai.GenerativeModel(model_name)
+                logger.info(f"Gemini translate model (chunk): {model_name}")
+                response = model.generate_content(
+                    [f"System: {system_prompt}", f"User: {user_prompt}"],
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.1,
+                        max_output_tokens=4000,
+                    ),
                 )
-                
-                translated_chunk = response.choices[0].message.content
+                translated_chunk = response.text
                 translated_chunks.append(translated_chunk)
                 
             except Exception as e:
