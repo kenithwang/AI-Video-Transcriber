@@ -49,6 +49,13 @@ transcriber = Transcriber()
 summarizer = Summarizer()
 translator = Translator()
 
+# 全局翻译开关（通过环境变量控制，默认开启翻译）
+def _env_flag(name: str, default: str = "0") -> bool:
+    val = os.getenv(name, default).strip().lower()
+    return val in ("1", "true", "yes", "y", "on")
+
+NO_TRANSLATE = _env_flag("NO_TRANSLATE", "0") or _env_flag("DISABLE_TRANSLATION", "0")
+
 # 存储任务状态 - 使用文件持久化
 import json
 import threading
@@ -232,16 +239,8 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
         except Exception as e:
             logger.error(f"保存原始转录Markdown失败: {e}")
         
-        # 更新状态：优化转录文本
-        tasks[task_id].update({
-            "progress": 55,
-            "message": "正在优化转录文本..."
-        })
-        save_tasks(tasks)
-        await broadcast_task_update(task_id, tasks[task_id])
-        
-        # 优化转录文本：修正错别字，按含义分段
-        script = await summarizer.optimize_transcript(raw_script)
+        # 使用原始转录文本，跳过单块文本优化流程
+        script = raw_script
         
         # 为转录文本添加标题，并在结尾添加来源链接
         script_with_title = f"# {video_title}\n\n{script}\n\nsource: {url}\n"
@@ -254,7 +253,8 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
         translation_filename = None
         translation_path = None
         
-        if detected_language and translator.should_translate(detected_language, summary_language):
+        # 若设置 NO_TRANSLATE/DISABLE_TRANSLATION，则无论语言是否不一致都跳过翻译
+        if (not NO_TRANSLATE) and detected_language and translator.should_translate(detected_language, summary_language):
             logger.info(f"需要翻译: {detected_language} -> {summary_language}")
             # 更新状态：生成翻译
             tasks[task_id].update({
@@ -276,19 +276,7 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
         else:
             logger.info(f"不需要翻译: detected_language={detected_language}, summary_language={summary_language}, should_translate={translator.should_translate(detected_language, summary_language) if detected_language else 'N/A'}")
         
-        # 更新状态：生成摘要
-        tasks[task_id].update({
-            "progress": 80,
-            "message": "正在生成摘要..."
-        })
-        save_tasks(tasks)
-        await broadcast_task_update(task_id, tasks[task_id])
-        
-        # 生成摘要
-        summary = await summarizer.summarize(script, summary_language, video_title)
-        summary_with_source = summary + f"\n\nsource: {url}\n"
-        
-        # 保存优化后的转录文本到文件
+        # 保存转录文本到文件（直接使用原始转录，无优化/摘要）
         script_filename = f"transcript_{task_id}.md"
         script_path = TEMP_DIR / script_filename
         async with aiofiles.open(script_path, "w", encoding="utf-8") as f:
@@ -305,12 +293,6 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
             # 如重命名失败，继续使用原路径
             pass
 
-        # 保存摘要到文件（summary_标题_短ID.md）
-        summary_filename = f"summary_{safe_title}_{short_id}.md"
-        summary_path = TEMP_DIR / summary_filename
-        async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
-            await f.write(summary_with_source)
-        
         # 更新状态：完成
         task_result = {
             "status": "completed",
@@ -318,9 +300,7 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
             "message": "处理完成！",
             "video_title": video_title,
             "script": script_with_title,
-            "summary": summary_with_source,
             "script_path": str(script_path),
-            "summary_path": str(summary_path),
             "short_id": short_id,
             "safe_title": safe_title,
             "detected_language": detected_language,

@@ -4,7 +4,7 @@
 
 中文 | [English](README.md)
 
-一款开源的AI视频转录和摘要工具，支持YouTube、Bilibili、抖音等30+平台。
+一款开源的AI视频转录工具（可选翻译），支持YouTube、Bilibili、抖音等30+平台。
 
 ![Interface](cn-video.png)
 
@@ -14,8 +14,7 @@
 
 - 🎥 **多平台支持**: 支持YouTube、Bilibili、抖音等30+平台。
 - 🗣️ **智能转录**: 使用 Gemini（`gemini-2.5-pro`）进行高精度转写
-- 🤖 **AI文本优化**: 自动错别字修正、句子完整化和智能分段
-- 🌍 **多语言摘要**: 支持多种语言的智能摘要生成
+- 🌍 **可选翻译**：当目标语言与检测语言不一致时自动翻译
 - ⚙️ **条件式翻译**：当所选总结语言与检测到的语言不一致时，自动调用 Gemini 生成翻译
 - 📱 **移动适配**: 完美支持移动设备
 
@@ -25,7 +24,7 @@
 
 - Python 3.8+
 - FFmpeg
-- Gemini API 密钥（云端语音转写/优化/摘要/翻译均需）
+- Gemini API 密钥（云端转写/翻译所需）
 
 ### 安装方法
 
@@ -46,16 +45,15 @@ python3 cli.py --help
 python3 cli.py --url "<视频链接>" --lang zh
 ```
 
-#### 方法二：Docker部署（如仍需 Web 版）
+#### 方法二：Docker 部署（Web 版）
 
 ```bash
 # 克隆项目
 git clone https://github.com/wendy7756/AI-Video-Transcriber.git
 cd AI-Video-Transcriber
 
-# 使用Docker Compose（最简单）
 cp .env.example .env
-# 编辑.env文件，设置你的GEMINI_API_KEY
+# 编辑 .env 文件，设置 GEMINI_API_KEY
 docker-compose up -d
 
 # 或者直接使用Docker
@@ -123,9 +121,9 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 ### 默认行为
 
 - 转写：使用 Gemini `gemini-2.5-pro`（可由 `GEMINI_TRANSCRIBE_MODEL` 指定）。
-- 优化：默认开启，使用 `gemini-2.5-pro`（可用 `--optimize-model` 或 `GEMINI_OPTIMIZE_MODEL` 修改）。
 - 翻译：条件触发；仅当检测语言 ≠ `--lang` 且未使用 `--no-translate` 时执行。
-- 摘要：默认关闭；如需生成请加 `--with-summary`（模型 `GEMINI_SUMMARY_MODEL`，默认 `gemini-2.5-pro`）。
+  - Web 版可通过环境变量 `NO_TRANSLATE=1` 全局关闭自动翻译。
+- 摘要：Web 版已完全跳过；CLI 可通过 `--with-summary` 手动开启。
 - 输出目录：`temp/`（可用 `--outdir` 修改）。
 - 目标语言：`zh`（可用 `--lang` 修改）。
 - 音频文件：处理完成后默认删除；加 `--keep-audio` 可保留。
@@ -165,8 +163,7 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
    - 生成选定语言的AI摘要
 5. **查看结果**: 在 `temp/` 目录查看生成的 Markdown 文件：
    - `raw_标题_短ID.md`（原始转录）
-   - `transcript_标题_短ID.md`（优化转录）
-   - `summary_标题_短ID.md`（摘要）
+   - `transcript_标题_短ID.md`（转录）
    - `translation_标题_短ID.md`（如触发）
 
 ## 🛠️ 技术架构
@@ -174,7 +171,7 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 ### CLI 技术栈
 - **yt-dlp**：视频下载与处理
 - **FFmpeg**：音频抽取、重采样、静音检测与切分
-- **Gemini（google-generativeai）**：转写、优化、翻译、可选摘要
+- **Gemini（google-generativeai）**：转写、翻译（CLI 可选摘要）
 
 ### 项目结构（CLI 相关）
 ```
@@ -203,6 +200,7 @@ AI-Video-Transcriber/
 - `GEMINI_SUMMARY_MODEL`：摘要模型（未设则回退到 `GEMINI_MODEL`）。
 - `GEMINI_OPTIMIZE_MODEL`：优化模型（未设则回退到 `GEMINI_SUMMARY_MODEL` 或 `GEMINI_MODEL`）。
 - `GEMINI_TRANSLATE_MODEL`：翻译模型（未设则回退到 `GEMINI_MODEL`）。
+- `NO_TRANSLATE`：设置为 `1`/`true`/`yes` 可全局关闭自动翻译（Web/服务端）。
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`：可选代理。
 - `YT_DLP_PROXY`：仅为 yt-dlp 指定代理。
 

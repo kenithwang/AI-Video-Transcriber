@@ -13,6 +13,8 @@ services:
       - GEMINI_OPTIMIZE_MODEL=${GEMINI_OPTIMIZE_MODEL:-}
       - GEMINI_TRANSLATE_MODEL=${GEMINI_TRANSLATE_MODEL:-}
       - GEMINI_SUMMARY_MODEL=${GEMINI_SUMMARY_MODEL:-}
+      # 可选：关闭自动翻译（1/true/yes）
+      - NO_TRANSLATE=${NO_TRANSLATE:-}
       # 服务器配置
       - HOST=0.0.0.0
       - PORT=8000

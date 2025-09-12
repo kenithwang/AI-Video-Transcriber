@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
+import os
 from typing import Awaitable, Callable, Optional, Tuple
 
 from .video_processor import VideoProcessor
@@ -33,7 +34,7 @@ async def process_video(
     keep_audio: bool = False,
 ) -> dict:
     """
-    Full processing pipeline used by CLI: download → transcribe → optimize → maybe translate → summarize → write files.
+    Full processing pipeline used by CLI: download → transcribe → maybe translate → (optional summary) → write files.
 
     Returns a result dict with output file names and detected language.
     """
@@ -59,6 +60,14 @@ async def process_video(
     summarizer = Summarizer()
     translator = Translator()
 
+    # 环境开关：如果设置 NO_TRANSLATE/DISABLE_TRANSLATION，则跳过翻译
+    def _env_flag(name: str, default: str = "0") -> bool:
+        val = os.getenv(name, default)
+        if val is None:
+            return False
+        return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
+    env_no_translate = _env_flag("NO_TRANSLATE") or _env_flag("DISABLE_TRANSLATION")
+
     # 1) Download + convert
     status.update({"progress": 10, "message": "downloading video..."})
     await emit(status)
@@ -81,20 +90,15 @@ async def process_video(
     with raw_md_path.open("w", encoding="utf-8") as f:
         f.write((raw_script or "") + f"\n\nsource: {url}\n")
 
-    await emit({**status, "progress": 45, "message": "optimizing transcript..."})
-
-    # 3) Optimize transcript
-    if skip_optimize:
-        script = raw_script
-    else:
-        script = await summarizer.optimize_transcript(raw_script)
+    # 3) Use raw transcript directly (skip optimization)
+    script = raw_script
     script_with_title = f"# {video_title}\n\n{script}\n\nsource: {url}\n"
 
     # detected_language 已由云端返回；如无则保持 None
 
     # 4) Conditional translation
     translation_filename = None
-    if (not skip_translate) and detected_language and translator.should_translate(detected_language, summary_language):
+    if (not skip_translate) and (not env_no_translate) and detected_language and translator.should_translate(detected_language, summary_language):
         await emit({**status, "progress": 65, "message": "generating translation..."})
         translation_content = await translator.translate_text(script, summary_language, detected_language)
         translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"

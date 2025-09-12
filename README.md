@@ -4,7 +4,7 @@
 
 English | [中文](README_ZH.md)
 
-An AI-powered video transcription and summarization tool that supports multiple video platforms including YouTube, Tiktok, Bilibili, and 30+ platforms.
+An AI-powered video transcription tool (with optional translation) that supports multiple video platforms including YouTube, Tiktok, Bilibili, and 30+ platforms.
 
 ![Interface](en-video.png)
 
@@ -14,8 +14,7 @@ An AI-powered video transcription and summarization tool that supports multiple 
 
 - 🎥 **Multi-Platform Support**: Works with YouTube, Tiktok, Bilibili, and 30+ more
 - 🗣️ **Intelligent Transcription**: Cloud transcription via Gemini (`gemini-2.5-pro`)
-- 🤖 **AI Text Optimization**: Automatic typo correction, sentence completion, and intelligent paragraphing
-- 🌍 **Multi-Language Summaries**: Generate intelligent summaries in multiple languages
+- 🌍 **Optional Translation**: Translate transcript when target language differs
 - ⚡ **Real-Time Progress**: Live progress tracking and status updates
 - ⚙️ **Conditional Translation**: When the selected summary language differs from the detected transcript language, the system auto-translates with Gemini
 - 📱 **Mobile-Friendly**: Perfect support for mobile devices
@@ -26,7 +25,7 @@ An AI-powered video transcription and summarization tool that supports multiple 
 
 - Python 3.8+
 - FFmpeg
-- Gemini API key (required for cloud transcription/optimization/summary/translation)
+- Gemini API key (required for cloud transcription/translation)
 
 ### Installation
 
@@ -46,14 +45,16 @@ python3 cli.py --help
 python3 cli.py --url "<video_url>" --lang en
 ```
 
-#### Method 2: Docker (if you still need the Web app)
+#### Method 2: Docker (Web app)
 
 ```bash
 # Clone the repository
 git clone https://github.com/wendy7756/AI-Video-Transcriber.git
 cd AI-Video-Transcriber
 
-# (Deprecated) Web/Docker usage has been removed; use the CLI instead.
+cp .env.example .env
+# set GEMINI_API_KEY in .env
+docker-compose up -d
 
 # Or using Docker directly
 docker build -t ai-video-transcriber .
@@ -119,9 +120,8 @@ The CLI auto-loads environment from a `.env` file in the working directory if pr
 ### Defaults
 
 - Transcription: Gemini `gemini-2.5-pro` (`GEMINI_TRANSCRIBE_MODEL` or `GEMINI_MODEL`).
-- Optimization: enabled by default using `gemini-2.5-pro` (can change via `--optimize-model` or `GEMINI_OPTIMIZE_MODEL`).
 - Translation: conditional; runs only if detected language != `--lang` and not `--no-translate`.
-- Summary: disabled by default; enable with `--with-summary` (model `GEMINI_SUMMARY_MODEL`, default `gemini-2.5-pro`).
+- Summary: disabled by default; web app skips summary entirely. CLI can enable with `--with-summary`.
 - Output directory: `temp/` (change with `--outdir`).
 - Target language: `zh` (change with `--lang`).
 - Audio file: deleted after processing by default; keep with `--keep-audio`.
@@ -162,8 +162,7 @@ Notes:
    - AI summary generation in selected language
 5. **Results**: Check Markdown files under `temp/`:
    - `raw_{title}_{id}.md` (raw transcript)
-   - `transcript_{title}_{id}.md` (optimized transcript)
-   - `summary_{title}_{id}.md` (summary)
+   - `transcript_{title}_{id}.md` (transcript)
    - `translation_{title}_{id}.md` (if triggered)
 
 ## 🛠️ Technical Architecture
@@ -171,7 +170,7 @@ Notes:
 ### CLI Stack
 - **yt-dlp**: Video downloading and processing
 - **FFmpeg**: Audio extraction, resampling, silence detection, chunking
-- **Gemini (google-generativeai)**: Transcription, optimization, translation, optional summary
+- **Gemini (google-generativeai)**: Transcription, translation, optional summary (CLI only)
 
 ### Frontend Stack
 - **HTML5 + CSS3**: Responsive interface design
@@ -283,18 +282,8 @@ docker pull hello-world
 - Multilingual transcription via Gemini
 - Automatic language hints and robust recognition
 
-### Summary Generation
-- English
-- Chinese (Simplified)
-- Japanese
-- Korean
-- Spanish
-- French
-- German
-- Portuguese
-- Russian
-- Arabic
-- And more...
+### Translation
+- English, Chinese (Simplified), Japanese, Korean, Spanish, French, German, Portuguese, Russian, Arabic, and more
 
 ## 📈 Performance Tips
 

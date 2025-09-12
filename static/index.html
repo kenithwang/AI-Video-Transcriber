@@ -419,7 +419,7 @@
                 </button>
             </div>
             <h1><i class="fas fa-video"></i> <span data-i18n="title">AI Video Transcriber</span></h1>
-            <p data-i18n="subtitle">Supports automatic transcription and AI summary for YouTube, Tiktok, Bilibili and other platforms</p>
+            <p data-i18n="subtitle">Supports automatic transcription for YouTube, Tiktok, Bilibili and more</p>
         </div>
 
         <!-- 输入表单 -->
@@ -438,7 +438,7 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="summaryLanguage">
-                            <i class="fas fa-language"></i> <span data-i18n="summary_language">Summary Language</span>
+                            <i class="fas fa-language"></i> <span data-i18n="summary_language">Target Language</span>
                         </label>
                         <select id="summaryLanguage" class="form-control">
                             <option value="en">English</option>
@@ -495,18 +495,13 @@
                     <button class="btn btn-info" id="downloadTranslation" style="display: none;">
                         <span data-i18n="download_translation">Download Translation</span>
                     </button>
-                    <button class="btn btn-success" id="downloadSummary">
-                        <span data-i18n="download_summary">Download Summary</span>
-                    </button>
+                    
                 </div>
             </div>
             
             <div class="content-tabs">
                 <button class="tab-button active" data-tab="script">
                     <i class="fas fa-file-text"></i> <span data-i18n="transcript_text">Transcript Text</span>
-                </button>
-                <button class="tab-button" data-tab="summary">
-                    <i class="fas fa-clipboard-list"></i> <span data-i18n="intelligent_summary">AI Summary</span>
                 </button>
                 <button class="tab-button" data-tab="translation" id="translationTabBtn" style="display: none;">
                     <i class="fas fa-language"></i> <span data-i18n="translation">Translation</span>
@@ -519,10 +514,6 @@
 
             <div id="translationTab" class="tab-content">
                 <div class="markdown-content" id="translationContent"></div>
-            </div>
-
-            <div id="summaryTab" class="tab-content">
-                <div class="markdown-content" id="summaryContent"></div>
             </div>
         </div>
 

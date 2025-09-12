@@ -20,27 +20,23 @@ class VideoTranscriber {
         this.translations = {
             en: {
                 title: "AI Video Transcriber",
-                subtitle: "Supports automatic transcription and AI summary for YouTube, Tiktok, Bilibili and other platforms",
+                subtitle: "Supports automatic transcription for YouTube, Tiktok, Bilibili and more",
                 video_url: "Video URL",
                 video_url_placeholder: "Enter YouTube, Tiktok, Bilibili or other platform video URLs...",
-                summary_language: "Summary Language",
+                summary_language: "Target Language",
                 start_transcription: "Start",
                 processing_progress: "Processing Progress",
                 preparing: "Preparing...",
                 transcription_results: "Results",
                 download_transcript: "Download Transcript",
                 download_translation: "Download Translation",
-                download_summary: "Download Summary",
                 transcript_text: "Transcript Text",
                 translation: "Translation",
-                intelligent_summary: "AI Summary",
                 footer_text: "Powered by AI, supports multi-platform video transcription",
                 processing: "Processing...",
                 downloading_video: "Downloading video...",
                 parsing_video: "Parsing video info...",
                 transcribing_audio: "Transcribing audio...",
-                optimizing_transcript: "Optimizing transcript...",
-                generating_summary: "Generating summary...",
                 completed: "Processing completed!",
                 error_invalid_url: "Please enter a valid video URL",
                 error_processing_failed: "Processing failed: ",
@@ -53,27 +49,23 @@ class VideoTranscriber {
             },
             zh: {
                 title: "AI视频转录器",
-                subtitle: "支持YouTube、Tiktok、Bilibili等平台的视频自动转录和智能摘要",
+                subtitle: "支持YouTube、Tiktok、Bilibili等平台的视频自动转录",
                 video_url: "视频链接",
                 video_url_placeholder: "请输入YouTube、Tiktok、Bilibili等平台的视频链接...",
-                summary_language: "摘要语言",
+                summary_language: "目标语言",
                 start_transcription: "开始转录",
                 processing_progress: "处理进度",
                 preparing: "准备中...",
                 transcription_results: "转录结果",
                 download_transcript: "下载转录",
                 download_translation: "下载翻译",
-                download_summary: "下载摘要",
                 transcript_text: "转录文本",
                 translation: "翻译",
-                intelligent_summary: "智能摘要",
                 footer_text: "由AI驱动，支持多平台视频转录",
                 processing: "处理中...",
                 downloading_video: "正在下载视频...",
                 parsing_video: "正在解析视频信息...",
                 transcribing_audio: "正在转录音频...",
-                optimizing_transcript: "正在优化转录文本...",
-                generating_summary: "正在生成摘要...",
                 completed: "处理完成！",
                 error_invalid_url: "请输入有效的视频链接",
                 error_processing_failed: "处理失败: ",
@@ -112,10 +104,10 @@ class VideoTranscriber {
         this.resultsSection = document.getElementById('resultsSection');
         this.scriptContent = document.getElementById('scriptContent');
         this.translationContent = document.getElementById('translationContent');
-        this.summaryContent = document.getElementById('summaryContent');
+        // Summary UI removed for simplified flow
         this.downloadScriptBtn = document.getElementById('downloadScript');
         this.downloadTranslationBtn = document.getElementById('downloadTranslation');
-        this.downloadSummaryBtn = document.getElementById('downloadSummary');
+        // Summary download removed
         this.translationTabBtn = document.getElementById('translationTabBtn');
         
         // 调试：检查元素是否正确初始化
@@ -160,11 +152,7 @@ class VideoTranscriber {
             });
         }
         
-        if (this.downloadSummaryBtn) {
-            this.downloadSummaryBtn.addEventListener('click', () => {
-                this.downloadFile('summary');
-            });
-        }
+        // No summary download binding
         
         // 语言切换按钮
         this.langToggle.addEventListener('click', () => {
@@ -307,7 +295,7 @@ class VideoTranscriber {
                     this.stopSSE();
                     this.setLoading(false);
                     this.hideProgress();
-                    this.showResults(task.script, task.summary, task.video_title, task.translation, task.detected_language, task.summary_language);
+                    this.showResults(task.script, null, task.video_title, task.translation, task.detected_language, task.summary_language);
                 } else if (task.status === 'error') {
                     console.log('[DEBUG] ❌ 任务失败:', task.error);
                     this.stopSmartProgress(); // 停止智能进度模拟
@@ -336,7 +324,7 @@ class VideoTranscriber {
                             this.stopSmartProgress();
                             this.setLoading(false);
                             this.hideProgress();
-                            this.showResults(task.script, task.summary, task.video_title, task.translation, task.detected_language, task.summary_language);
+                            this.showResults(task.script, null, task.video_title, task.translation, task.detected_language, task.summary_language);
                             return;
                         }
                     }
@@ -412,12 +400,6 @@ class VideoTranscriber {
         } else if (message.includes('转录') || message.includes('transcrib')) {
             this.smartProgress.stage = 'transcribing';
             this.smartProgress.target = 80;
-        } else if (message.includes('优化') || message.includes('optimiz')) {
-            this.smartProgress.stage = 'optimizing';
-            this.smartProgress.target = 90;
-        } else if (message.includes('摘要') || message.includes('summary')) {
-            this.smartProgress.stage = 'summarizing';
-            this.smartProgress.target = 95;
         } else if (message.includes('完成') || message.includes('completed')) {
             this.smartProgress.stage = 'completed';
             this.smartProgress.target = 100;
@@ -501,9 +483,7 @@ class VideoTranscriber {
         const stageConfig = {
             'parsing': { speed: 0.3, maxTime: 30 },      // 解析阶段：30秒内到25%
             'downloading': { speed: 0.2, maxTime: 120 }, // 下载阶段：2分钟内到60%
-            'transcribing': { speed: 0.15, maxTime: 180 }, // 转录阶段：3分钟内到80%
-            'optimizing': { speed: 0.25, maxTime: 60 },  // 优化阶段：1分钟内到90%
-            'summarizing': { speed: 0.3, maxTime: 30 }   // 摘要阶段：30秒内到95%
+            'transcribing': { speed: 0.15, maxTime: 180 } // 转录阶段：3分钟内到80%
         };
         
         const config = stageConfig[this.smartProgress.stage] || { speed: 0.2, maxTime: 60 };
@@ -530,8 +510,6 @@ class VideoTranscriber {
             'parsing': this.t('parsing_video'),
             'downloading': this.t('downloading_video'),
             'transcribing': this.t('transcribing_audio'),
-            'optimizing': this.t('optimizing_transcript'),
-            'summarizing': this.t('generating_summary'),
             'completed': this.t('completed')
         };
         
@@ -553,10 +531,6 @@ class VideoTranscriber {
             translatedMessage = this.t('parsing_video');
         } else if (message.includes('转录') || message.includes('transcrib') || message.includes('Transcrib')) {
             translatedMessage = this.t('transcribing_audio');
-        } else if (message.includes('优化转录') || message.includes('optimizing') || message.includes('Optimizing')) {
-            translatedMessage = this.t('optimizing_transcript');
-        } else if (message.includes('摘要') || message.includes('summary') || message.includes('Summary')) {
-            translatedMessage = this.t('generating_summary');
         } else if (message.includes('完成') || message.includes('complet') || message.includes('Complet')) {
             translatedMessage = this.t('completed');
         } else if (message.includes('准备') || message.includes('prepar') || message.includes('Prepar')) {
@@ -587,11 +561,10 @@ class VideoTranscriber {
 
         // 渲染markdown内容，确保参数不为null
         const safeScript = script || '';
-        const safeSummary = summary || '';
+        // Summary is skipped; no summary content
         const safeTranslation = translation || '';
         
         this.scriptContent.innerHTML = safeScript ? marked.parse(safeScript) : '';
-        this.summaryContent.innerHTML = safeSummary ? marked.parse(safeSummary) : '';
         
         // 处理翻译
         const shouldShowTranslation = safeTranslation && detectedLanguage && summaryLanguage && detectedLanguage !== summaryLanguage;
@@ -705,13 +678,6 @@ class VideoTranscriber {
                         filename = taskData.script_path.split('/').pop(); // 获取文件名部分
                     } else {
                         filename = `transcript_${taskData.safe_title || 'untitled'}_${taskData.short_id || 'unknown'}.md`;
-                    }
-                    break;
-                case 'summary':
-                    if (taskData.summary_path) {
-                        filename = taskData.summary_path.split('/').pop();
-                    } else {
-                        filename = `summary_${taskData.safe_title || 'untitled'}_${taskData.short_id || 'unknown'}.md`;
                     }
                     break;
                 case 'translation':
