@@ -17,6 +17,7 @@ from video_processor import VideoProcessor
 from transcriber import Transcriber
 from summarizer import Summarizer
 from translator import Translator
+from editor import Editor
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +49,7 @@ video_processor = VideoProcessor()
 transcriber = Transcriber()
 summarizer = Summarizer()
 translator = Translator()
+editor = Editor()
 
 # 全局翻译开关（通过环境变量控制，默认开启翻译）
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -131,7 +133,8 @@ async def read_root():
 @app.post("/api/process-video")
 async def process_video(
     url: str = Form(...),
-    summary_language: str = Form(default="zh")
+    summary_language: str = Form(default="zh"),
+    edit_mode: Optional[str] = Form(default=None),
 ):
     """
     处理视频链接，返回任务ID
@@ -163,7 +166,7 @@ async def process_video(
         save_tasks(tasks)
         
         # 创建并跟踪异步任务
-        task = asyncio.create_task(process_video_task(task_id, url, summary_language))
+        task = asyncio.create_task(process_video_task(task_id, url, summary_language, edit_mode))
         active_tasks[task_id] = task
         
         return {"task_id": task_id, "message": "任务已创建，正在处理中..."}
@@ -172,7 +175,7 @@ async def process_video(
         logger.error(f"处理视频时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
-async def process_video_task(task_id: str, url: str, summary_language: str):
+async def process_video_task(task_id: str, url: str, summary_language: str, edit_mode: Optional[str]):
     """
     异步处理视频任务
     """
@@ -293,6 +296,26 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
             # 如重命名失败，继续使用原路径
             pass
 
+        # 可选：Edit Note（若提供 edit_mode）
+        editnote_filename = None
+        editnote_path = None
+        if edit_mode:
+            try:
+                tasks[task_id].update({
+                    "progress": 85,
+                    "message": f"正在生成 Edit Note ({edit_mode})..."
+                })
+                save_tasks(tasks)
+                await broadcast_task_update(task_id, tasks[task_id])
+
+                edit_note = await editor.generate(edit_mode, script)
+                editnote_filename = f"editnote_{edit_mode}_{safe_title}_{short_id}.md"
+                editnote_path = TEMP_DIR / editnote_filename
+                async with aiofiles.open(editnote_path, "w", encoding="utf-8") as f:
+                    await f.write(edit_note + f"\n\nsource: {url}\n")
+            except Exception as e:
+                logger.error(f"生成 Edit Note 失败: {e}")
+
         # 更新状态：完成
         task_result = {
             "status": "completed",
@@ -313,6 +336,13 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
                 "translation": translation_with_title,
                 "translation_path": str(translation_path),
                 "translation_filename": translation_filename
+            })
+        if editnote_filename and editnote_path:
+            task_result.update({
+                "edit_note": edit_note,
+                "editnote_path": str(editnote_path),
+                "editnote_filename": editnote_filename,
+                "edit_mode": edit_mode,
             })
         
         tasks[task_id].update(task_result)

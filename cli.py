@@ -43,6 +43,8 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
                       summary_model: str | None = None,
                       optimize_model: str | None = None,
                       translate_model: str | None = None,
+                      edit_mode: str | None = None,
+                      edit_model: str | None = None,
                       ):
     from backend.pipeline import process_video
 
@@ -59,6 +61,8 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
         _os.environ["GEMINI_OPTIMIZE_MODEL"] = optimize_model
     if translate_model:
         _os.environ["GEMINI_TRANSLATE_MODEL"] = translate_model
+    if edit_model:
+        _os.environ["GEMINI_EDIT_MODEL"] = edit_model
 
     res = await process_video(
         url=url,
@@ -69,13 +73,14 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
         skip_translate=no_translate,
         skip_summary=no_summary,
         keep_audio=keep_audio,
+        edit_mode=edit_mode,
     )
 
     print("\n=== 处理完成 ===")
     print(f"标题: {res.get('video_title')}")
     print(f"检测语言: {res.get('detected_language')}")
     print("输出文件：")
-    for key in ["raw_script_file", "transcript_file", "summary_file", "translation_file"]:
+    for key in ["raw_script_file", "transcript_file", "summary_file", "translation_file", "editnote_file"]:
         val = res.get(key)
         if val:
             print(f" - {key}: {outdir / val}")
@@ -102,6 +107,11 @@ def main():
     parser.add_argument("--summary-model", help="摘要/优化默认模型（默认 gemini-2.5-pro）")
     parser.add_argument("--optimize-model", help="优化模型（默认同摘要模型或 GEMINI_OPTIMIZE_MODEL）")
     parser.add_argument("--translate-model", help="翻译模型（默认 gemini-2.5-pro）")
+    # Edit Note
+    parser.add_argument("--edit-mode", choices=[
+        "product_annoucement", "market_view", "client_call", "project_kickoff", "internal_meeting"
+    ], help="按所选模板生成编辑笔记（不提供则跳过）")
+    parser.add_argument("--edit-model", help="Edit Note 模型（默认 GEMINI_EDIT_MODEL 或回退）")
     args = parser.parse_args()
 
     if not ensure_ffmpeg():
@@ -123,6 +133,40 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # 交互式：在未指定 --edit-mode 时，询问是否生成 Edit Note
+    if args.edit_mode is None:
+        try:
+            yn = input("是否生成 Edit Note? (y/N): ").strip().lower()
+        except KeyboardInterrupt:
+            print()
+            sys.exit(1)
+        if yn in ("y", "yes"):
+            # 让用户选择模式
+            modes = [
+                "product_annoucement",
+                "market_view",
+                "client_call",
+                "project_kickoff",
+                "internal_meeting",
+            ]
+            print("请选择 Edit Note 模式:")
+            for i, m in enumerate(modes, 1):
+                print(f"  {i}. {m}")
+            sel = None
+            try:
+                sel = input("输入序号(1-5): ").strip()
+            except KeyboardInterrupt:
+                print()
+                sys.exit(1)
+            try:
+                idx = int(sel)
+                if 1 <= idx <= len(modes):
+                    args.edit_mode = modes[idx - 1]
+                else:
+                    print("[i] 输入无效，跳过 Edit Note")
+            except Exception:
+                print("[i] 输入无效，跳过 Edit Note")
+
     try:
         if args.stt_model:
             os.environ["GEMINI_TRANSCRIBE_MODEL"] = args.stt_model
@@ -137,6 +181,8 @@ def main():
             summary_model=args.summary_model,
             optimize_model=args.optimize_model,
             translate_model=args.translate_model,
+            edit_mode=args.edit_mode,
+            edit_model=args.edit_model,
         ))
     except KeyboardInterrupt:
         print("\n已取消")

@@ -17,6 +17,8 @@
 - 🌍 **可选翻译**：当目标语言与检测语言不一致时自动翻译
 - ⚙️ **条件式翻译**：当所选总结语言与检测到的语言不一致时，自动调用 Gemini 生成翻译
 - 📱 **移动适配**: 完美支持移动设备
+- 🚀 **并行分片转写**：一次性切片，支持多通道并行转写（默认并行度3，可调）
+- 📝 **可选 Edit Note**：基于 `Prompts.md` 模板生成结构化编辑笔记（可选步骤，结果写入 `temp/`）
 
 ## 🚀 快速开始（CLI）
 
@@ -115,6 +117,8 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 - `--summary-model`：摘要模型（同时作为优化默认模型）。默认 `gemini-2.5-pro`。
 - `--optimize-model`：优化模型（仅覆盖优化阶段）。
 - `--translate-model`：翻译模型。默认 `gemini-2.5-pro`。
+ - `--edit-mode`：按模板生成 Edit Note（`product_annoucement|market_view|client_call|project_kickoff|internal_meeting`）。
+ - `--edit-model`：Edit Note 的模型（默认回退 `GEMINI_EDIT_MODEL` → `GEMINI_SUMMARY_MODEL` → `GEMINI_MODEL`）。
 
 说明：CLI 会在启动时自动加载当前目录的 `.env` 文件（如存在）。
 
@@ -122,12 +126,13 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 
 - 转写：使用 Gemini `gemini-2.5-pro`（可由 `GEMINI_TRANSCRIBE_MODEL` 指定）。
 - 翻译：条件触发；仅当检测语言 ≠ `--lang` 且未使用 `--no-translate` 时执行。
-  - Web 版可通过环境变量 `NO_TRANSLATE=1` 全局关闭自动翻译。
+  - Web/服务端可通过环境变量 `NO_TRANSLATE=1` 全局关闭自动翻译。
 - 摘要：Web 版已完全跳过；CLI 可通过 `--with-summary` 手动开启。
 - 输出目录：`temp/`（可用 `--outdir` 修改）。
 - 目标语言：`zh`（可用 `--lang` 修改）。
 - 音频文件：处理完成后默认删除；加 `--keep-audio` 可保留。
 - 环境变量：自动加载 `.env`，无需手动 export。
+ - Edit Note：默认不生成；未指定 `--edit-mode` 时 CLI 启动会询问是否生成与选择模式；生成文件写入 `temp/`。
 
 转写流程：
 - 下载最佳音轨并转为 16kHz 单声道；
@@ -146,6 +151,8 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
   - `python3 cli.py --url "<视频链接>" --keep-audio`
 - 同时生成摘要：
   - `python3 cli.py --url "<视频链接>" --with-summary`
+- 生成 Edit Note（示例：client_call 模式）：
+  - `python3 cli.py --url "<视频链接>" --edit-mode client_call`
 
 说明：
 - 必须设置 `GEMINI_API_KEY` 才能完成云端转写与后续处理。
@@ -165,6 +172,7 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
    - `raw_标题_短ID.md`（原始转录）
    - `transcript_标题_短ID.md`（转录）
    - `translation_标题_短ID.md`（如触发）
+   - `editnote_模式_标题_短ID.md`（如选择生成 Edit Note）
 
 ## 🛠️ 技术架构
 
@@ -178,10 +186,11 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 AI-Video-Transcriber/
 ├── backend/
 │   ├── pipeline.py        # CLI 复用的处理管线
-│   ├── video_processor.py # 视频下载
-│   ├── cloud_transcriber.py # 云端转写（Gemini）
-│   ├── summarizer.py      # 优化与摘要
-│   └── translator.py      # 翻译
+│   ├── video_processor.py     # 视频下载
+│   ├── obsidian_transcriber.py # 分片+并行云端转写（Gemini）
+│   ├── summarizer.py          # 优化与摘要（可选）
+│   ├── translator.py          # 翻译（可选）
+│   └── editor.py              # 按 Prompts.md 生成 Edit Note（可选）
 ├── cli.py                 # CLI 入口
 ├── temp/                  # 输出目录（可变）
 ├── .env.example           # 环境变量模板
@@ -201,6 +210,8 @@ AI-Video-Transcriber/
 - `GEMINI_OPTIMIZE_MODEL`：优化模型（未设则回退到 `GEMINI_SUMMARY_MODEL` 或 `GEMINI_MODEL`）。
 - `GEMINI_TRANSLATE_MODEL`：翻译模型（未设则回退到 `GEMINI_MODEL`）。
 - `NO_TRANSLATE`：设置为 `1`/`true`/`yes` 可全局关闭自动翻译（Web/服务端）。
+- `TRANSCRIBE_CONCURRENCY`：并行转写的并发数（默认 3，建议 2-5 之间，受网络与限速影响）。
+- `GEMINI_EDIT_MODEL`：Edit Note 生成模型（未设则回退 `GEMINI_SUMMARY_MODEL`/`GEMINI_MODEL`）。
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`：可选代理。
 - `YT_DLP_PROXY`：仅为 yt-dlp 指定代理。
 

@@ -7,6 +7,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Optional, Tuple, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import google.generativeai as genai
 
@@ -34,7 +35,7 @@ class ObsidianTranscriber:
     - 仅返回纯文本；最后拼接为一份完整的逐字稿。
     """
 
-    def __init__(self, segment_seconds: int = 300):
+    def __init__(self, segment_seconds: int = 300, parallelism: Optional[int] = None):
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise RuntimeError('未设置 GEMINI_API_KEY')
@@ -46,6 +47,18 @@ class ObsidianTranscriber:
         if self.model_name.startswith('models/'):
             self.model_name = self.model_name.split('/', 1)[-1]
         self.segment_seconds = segment_seconds
+        # 并行度：优先读取环境变量 TRANSCRIBE_CONCURRENCY/OBSIDIAN_CONCURRENCY
+        if parallelism is None:
+            par_env = os.getenv('TRANSCRIBE_CONCURRENCY') or os.getenv('OBSIDIAN_CONCURRENCY')
+            try:
+                self.parallelism = int(par_env) if par_env else 0
+            except Exception:
+                self.parallelism = 0
+        else:
+            self.parallelism = int(parallelism)
+        # 合理默认：0或<1 则根据CPU与网络取一个小值（例如3）
+        if self.parallelism < 1:
+            self.parallelism = 3
 
     def _ffprobe_duration(self, path: Path) -> float:
         try:
@@ -198,17 +211,37 @@ class ObsidianTranscriber:
         logger.info(f"[obsidian] 文件: {p.name}, 大小: {self._fmt_size(size)}, 时长: {self._fmt_duration(dur)}, 模型: {self.model_name}")
 
         chunks, workdir = self._split_audio(p)
-        texts: List[str] = []
-        for i, c in enumerate(chunks, 1):
-            c_dur = self._ffprobe_duration(c)
-            logger.info(f"[obsidian] 转写分片 {i}/{len(chunks)}: {c.name} ~{self._fmt_duration(c_dur)}")
-            t = self._gen_text(c)
-            if t:
-                texts.append(t)
-            else:
-                logger.warning(f'[obsidian] 分片无文本输出: {c.name}')
+        logger.info(f"[obsidian] 切片完成，共 {len(chunks)} 段，准备并行转写（并行度={self.parallelism}）")
 
-        body = '\n\n'.join(texts).strip()
+        texts_by_index: dict[int, str] = {}
+        # 在线程池中并行处理每个分片，保持输出顺序
+        with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
+            futures = {}
+            for i, c in enumerate(chunks, 1):
+                c_dur = self._ffprobe_duration(c)
+                logger.info(f"[obsidian] 排队分片 {i}/{len(chunks)}: {c.name} ~{self._fmt_duration(c_dur)}")
+                fut = ex.submit(self._gen_text, c)
+                futures[fut] = i
+
+            done_count = 0
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    t = fut.result()
+                except Exception as e:
+                    logger.error(f"[obsidian] 分片 {idx} 处理异常: {e}")
+                    t = ''
+                if t:
+                    texts_by_index[idx] = t
+                else:
+                    logger.warning(f"[obsidian] 分片无文本输出: chunk_{idx:03d}.wav")
+                done_count += 1
+                if done_count % max(1, len(chunks)//10) == 0 or done_count == len(chunks):
+                    logger.info(f"[obsidian] 并行转写进度: {done_count}/{len(chunks)} 完成")
+
+        # 按原顺序合并
+        texts_ordered: List[str] = [texts_by_index.get(i, '') for i in range(1, len(chunks)+1)]
+        body = '\n\n'.join([t for t in texts_ordered if t]).strip()
         det = language or _guess_language(body)
         # 返回 Markdown 与语言检测
         lines = [

@@ -9,6 +9,7 @@ from .video_processor import VideoProcessor
 from .obsidian_transcriber import ObsidianTranscriber
 from .summarizer import Summarizer
 from .translator import Translator
+from .editor import Editor
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ async def process_video(
     skip_translate: bool = False,
     skip_summary: bool = True,
     keep_audio: bool = False,
+    edit_mode: Optional[str] = None,
 ) -> dict:
     """
     Full processing pipeline used by CLI: download → transcribe → maybe translate → (optional summary) → write files.
@@ -59,6 +61,7 @@ async def process_video(
     transcriber = ObsidianTranscriber(segment_seconds=300)
     summarizer = Summarizer()
     translator = Translator()
+    editor = Editor()
 
     # 环境开关：如果设置 NO_TRANSLATE/DISABLE_TRANSLATION，则跳过翻译
     def _env_flag(name: str, default: str = "0") -> bool:
@@ -128,6 +131,14 @@ async def process_video(
         summary_filename = f"summary_{safe_title}_{short_id}.md"
         (temp_dir / summary_filename).write_text(summary_with_source, encoding="utf-8")
 
+    # 7) Optional Edit Note (use optimized transcript if present in future; currently use 'script')
+    editnote_filename = None
+    if edit_mode:
+        await emit({**status, "progress": 85, "message": f"generating edit note: {edit_mode}..."})
+        edit_note = await editor.generate(edit_mode, script)
+        editnote_filename = f"editnote_{edit_mode}_{safe_title}_{short_id}.md"
+        (temp_dir / editnote_filename).write_text(edit_note + f"\n\nsource: {url}\n", encoding="utf-8")
+
     # Optional cleanup of downloaded audio
     audio_deleted = False
     if not keep_audio:
@@ -167,6 +178,7 @@ async def process_video(
         "transcript_file": transcript_filename,
         "summary_file": summary_filename,
         "translation_file": translation_filename,
+        "editnote_file": editnote_filename,
         "short_id": short_id,
         "audio_file": None if audio_deleted else audio_path,
         "audio_deleted": audio_deleted,

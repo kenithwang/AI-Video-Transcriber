@@ -18,6 +18,8 @@ An AI-powered video transcription tool (with optional translation) that supports
 - ⚡ **Real-Time Progress**: Live progress tracking and status updates
 - ⚙️ **Conditional Translation**: When the selected summary language differs from the detected transcript language, the system auto-translates with Gemini
 - 📱 **Mobile-Friendly**: Perfect support for mobile devices
+ - 🚀 **Parallel Chunk Transcription**: Slice once, transcribe chunks in parallel (default concurrency 3, configurable)
+ - 📝 **Optional Edit Note**: Generate structured notes from `Prompts.md` templates (optional; output saved to `temp/`)
 
 ## 🚀 Quick Start (CLI)
 
@@ -114,6 +116,8 @@ python3 cli.py --url "<video_url>" --lang en --outdir temp
 - `--summary-model`: Model for summary (and default for optimization). Default: `gemini-2.5-pro`.
 - `--optimize-model`: Model for optimization (overrides `--summary-model` for optimization only).
 - `--translate-model`: Model for translation. Default: `gemini-2.5-pro`.
+- `--edit-mode`: Generate Edit Note using a template (`product_annoucement|market_view|client_call|project_kickoff|internal_meeting`).
+- `--edit-model`: Model for Edit Note (fallback `GEMINI_EDIT_MODEL` → `GEMINI_SUMMARY_MODEL` → `GEMINI_MODEL`).
 
 The CLI auto-loads environment from a `.env` file in the working directory if present.
 
@@ -121,11 +125,13 @@ The CLI auto-loads environment from a `.env` file in the working directory if pr
 
 - Transcription: Gemini `gemini-2.5-pro` (`GEMINI_TRANSCRIBE_MODEL` or `GEMINI_MODEL`).
 - Translation: conditional; runs only if detected language != `--lang` and not `--no-translate`.
+  - Web/server can globally disable translation via `NO_TRANSLATE=1`.
 - Summary: disabled by default; web app skips summary entirely. CLI can enable with `--with-summary`.
 - Output directory: `temp/` (change with `--outdir`).
 - Target language: `zh` (change with `--lang`).
 - Audio file: deleted after processing by default; keep with `--keep-audio`.
 - Environment: `.env` auto-loaded (no need to export manually).
+- Edit Note: Off by default. If `--edit-mode` not provided, CLI asks whether to generate and lets you pick a mode. Output file saved under `temp/`.
 
 Transcription flow:
 - Downloads best audio, converts to 16kHz mono.
@@ -164,6 +170,7 @@ Notes:
    - `raw_{title}_{id}.md` (raw transcript)
    - `transcript_{title}_{id}.md` (transcript)
    - `translation_{title}_{id}.md` (if triggered)
+   - `editnote_{mode}_{title}_{id}.md` (if Edit Note was generated)
 
 ## 🛠️ Technical Architecture
 
@@ -184,9 +191,10 @@ AI-Video-Transcriber/
 ├── backend/
 │   ├── pipeline.py        # Shared processing pipeline for CLI
 │   ├── video_processor.py # Video download
-│   ├── cloud_transcriber.py # Cloud transcription (Gemini)
-│   ├── summarizer.py      # Optimization & summary
-│   └── translator.py      # Translation
+│   ├── obsidian_transcriber.py # Chunked + parallel cloud transcription (Gemini)
+│   ├── summarizer.py          # Optimization & summary (optional)
+│   ├── translator.py          # Translation (optional)
+│   └── editor.py              # Edit Note generator from Prompts.md (optional)
 ├── cli.py                 # CLI entrypoint
 ├── temp/                  # Output directory (configurable)
 ├── .env.example           # Environment variables template
@@ -204,6 +212,9 @@ Environment Variables (auto-loaded from `.env`):
 - `GEMINI_SUMMARY_MODEL`: Model for summary (fallback to `GEMINI_MODEL`).
 - `GEMINI_OPTIMIZE_MODEL`: Model for optimization (fallback to `GEMINI_SUMMARY_MODEL` then `GEMINI_MODEL`).
 - `GEMINI_TRANSLATE_MODEL`: Model for translation (fallback to `GEMINI_MODEL`).
+- `GEMINI_EDIT_MODEL`: Model for Edit Note (fallback to `GEMINI_SUMMARY_MODEL` then `GEMINI_MODEL`).
+- `NO_TRANSLATE`: If `1`/`true`/`yes`, globally disable translation (web/server).
+- `TRANSCRIBE_CONCURRENCY`: Concurrency for parallel transcription (default 3; typical 2–6).
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`: Optional proxies.
 - `YT_DLP_PROXY`: Proxy specifically for yt-dlp.
 
