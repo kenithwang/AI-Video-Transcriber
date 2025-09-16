@@ -5,13 +5,27 @@ import subprocess
 import tempfile
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Lock
 from typing import Optional, Tuple, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AudioChunk:
+    path: Path
+    start: float
+    end: float
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end - self.start)
 
 
 def _guess_language(text: str) -> Optional[str]:
@@ -58,7 +72,23 @@ class ObsidianTranscriber:
             self.parallelism = int(parallelism)
         # 合理默认：0或<1 则根据CPU与网络取一个小值（例如3）
         if self.parallelism < 1:
-            self.parallelism = 3
+            cpu_default = os.cpu_count() or 4
+            self.parallelism = min(6, max(3, cpu_default // 2 or 1))
+
+        self._system_instruction = (
+            'You transcribe audio to plain text. Output only the verbatim transcript. '
+            'If the language is Chinese, use Simplified Chinese characters. No headings, no preface.'
+        )
+        self._generation_config = genai.types.GenerationConfig(
+            temperature=0.0,
+            response_mime_type='text/plain',
+            max_output_tokens=4096,
+        )
+        self._model_lock = Lock()
+        self._max_models = max(1, self.parallelism)
+        self._model_queue: Queue = Queue(maxsize=self._max_models)
+        self._models_created = 0
+        self._prime_model()
 
     def _ffprobe_duration(self, path: Path) -> float:
         try:
@@ -70,8 +100,8 @@ class ObsidianTranscriber:
         except Exception:
             return 0.0
 
-    def _split_audio(self, audio_path: Path) -> tuple[List[Path], Path]:
-        """静音对齐的分片：尽量以 segment_seconds 为目标，优先在±5s 静音点切分。返回(片段列表, 工作目录)。"""
+    def _split_audio(self, audio_path: Path) -> tuple[List[AudioChunk], Path]:
+        """静音对齐的分片：尽量以 segment_seconds 为目标，优先在±5s 静音点切分。返回(片段信息列表, 工作目录)。"""
         workdir = Path(tempfile.mkdtemp(prefix='obs_work_', dir=str(audio_path.parent)))
         norm_wav = workdir / 'normalized.wav'
         # 规范化为 16kHz/mono WAV
@@ -127,47 +157,87 @@ class ObsidianTranscriber:
         # 生成片段
         outdir = workdir / 'chunks'
         outdir.mkdir(parents=True, exist_ok=True)
-        files: List[Path] = []
-        for idx, (ss, ee) in enumerate(cuts, 1):
-            outp = outdir / f'chunk_{idx:03d}.wav'
-            cmd_cut = (
-                f"ffmpeg -hide_banner -loglevel error -y -ss {ss:.3f} -to {ee:.3f} -i {shlex.quote(str(norm_wav))} "
-                f"-ac 1 -ar 16000 {shlex.quote(str(outp))}"
-            )
-            subprocess.check_call(cmd_cut, shell=True)
-            files.append(outp)
-        if not files:
+        files: List[AudioChunk] = []
+        if not cuts:
             raise RuntimeError('音频切分失败，未生成片段')
-        return files, workdir
 
-    def _gen_text(self, wav_path: Path) -> str:
-        # 仅返回纯文本（无前缀标记），更接近“逐字稿”
-        instr = (
-            'You transcribe audio to plain text. Output only the verbatim transcript. '
-            'If the language is Chinese, use Simplified Chinese characters. No headings, no preface.'
-        )
-        model = genai.GenerativeModel(self.model_name, system_instruction=instr)
-        with wav_path.open('rb') as f:
-            data = f.read()
-        # 优先 audio-first，再 prompt-first
-        for parts in ([{"mime_type": "audio/wav", "data": data}],
-                      ['Transcribe the audio. Output plain text only.', {"mime_type": "audio/wav", "data": data}]):
-            try:
-                resp = model.generate_content(parts, generation_config=genai.types.GenerationConfig(
-                    temperature=0.0, response_mime_type='text/plain', max_output_tokens=4096
-                ))
-                txt = self._extract(resp)
-                if txt:
-                    return txt
-            except Exception as e:
-                logger.info(f'分片生成失败重试: {wav_path.name}: {e}')
-                continue
-        # 尝试上传文件路径
-        uploaded = genai.upload_file(path=str(wav_path))
-        resp = model.generate_content([uploaded], generation_config=genai.types.GenerationConfig(
-            temperature=0.0, response_mime_type='text/plain', max_output_tokens=4096
-        ))
-        return self._extract(resp)
+        if len(cuts) == 1 and abs(cuts[0][0]) < 1e-3 and abs(cuts[0][1] - duration) < 1e-3:
+            target = outdir / 'chunk_001.wav'
+            shutil.copy2(norm_wav, target)
+            files.append(AudioChunk(target, cuts[0][0], cuts[0][1]))
+            return files, workdir
+
+        segment_points = ','.join(f"{end:.3f}" for _, end in cuts[:-1])
+        cmd_cut = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+            '-i', str(norm_wav),
+            '-f', 'segment',
+            '-segment_times', segment_points,
+            '-segment_start_number', '1',
+            '-reset_timestamps', '1',
+            '-c', 'copy',
+            str(outdir / 'chunk_%03d.wav'),
+        ]
+        subprocess.check_call(cmd_cut)
+
+        produced = sorted(outdir.glob('chunk_*.wav'))
+        if len(produced) != len(cuts):
+            raise RuntimeError(f'分片数量不匹配，期望 {len(cuts)} 实际 {len(produced)}')
+
+        ordered: List[AudioChunk] = []
+        for idx, src in enumerate(produced, 1):
+            start, end = cuts[idx - 1]
+            ordered.append(AudioChunk(src, start, end))
+        return ordered, workdir
+
+    def _gen_text(self, chunk: AudioChunk) -> str:
+        model = self._acquire_model()
+        try:
+            with chunk.path.open('rb') as f:
+                data = f.read()
+            # 优先 audio-first，再 prompt-first
+            for parts in ([{"mime_type": "audio/wav", "data": data}],
+                          ['Transcribe the audio. Output plain text only.', {"mime_type": "audio/wav", "data": data}]):
+                try:
+                    resp = model.generate_content(parts, generation_config=self._generation_config)
+                    txt = self._extract(resp)
+                    if txt:
+                        return txt
+                except Exception as e:
+                    logger.info(f'分片生成失败重试: {chunk.path.name}: {e}')
+                    continue
+            # 尝试上传文件路径
+            uploaded = genai.upload_file(path=str(chunk.path))
+            resp = model.generate_content([uploaded], generation_config=self._generation_config)
+            return self._extract(resp)
+        finally:
+            self._release_model(model)
+
+    def _build_model(self):
+        return genai.GenerativeModel(self.model_name, system_instruction=self._system_instruction)
+
+    def _prime_model(self):
+        model = self._build_model()
+        self._model_queue.put(model)
+        self._models_created = 1
+
+    def _acquire_model(self):
+        try:
+            return self._model_queue.get_nowait()
+        except Empty:
+            with self._model_lock:
+                if self._models_created < self._max_models:
+                    model = self._build_model()
+                    self._models_created += 1
+                    return model
+        return self._model_queue.get()
+
+    def _release_model(self, model):
+        try:
+            self._model_queue.put_nowait(model)
+        except Exception:
+            # Queue may be full if models were created opportunistically; drop gracefully.
+            pass
 
     def _extract(self, resp) -> str:
         try:
@@ -217,11 +287,12 @@ class ObsidianTranscriber:
         # 在线程池中并行处理每个分片，保持输出顺序
         with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
             futures = {}
-            for i, c in enumerate(chunks, 1):
-                c_dur = self._ffprobe_duration(c)
-                logger.info(f"[obsidian] 排队分片 {i}/{len(chunks)}: {c.name} ~{self._fmt_duration(c_dur)}")
-                fut = ex.submit(self._gen_text, c)
-                futures[fut] = i
+            for idx, chunk in enumerate(chunks, 1):
+                logger.info(
+                    f"[obsidian] 排队分片 {idx}/{len(chunks)}: {chunk.path.name} ~{self._fmt_duration(chunk.duration)}"
+                )
+                fut = ex.submit(self._gen_text, chunk)
+                futures[fut] = idx
 
             done_count = 0
             for fut in as_completed(futures):

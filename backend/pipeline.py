@@ -47,6 +47,9 @@ async def process_video(
             return on_update(update)
         return asyncio.sleep(0)
 
+    async def _write_file(path: Path, content: str) -> None:
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+
     short_id = uuid.uuid4().hex[:6]
     status = {
         "status": "processing",
@@ -90,8 +93,7 @@ async def process_video(
     safe_title = _sanitize_title_for_filename(video_title)
     raw_md_filename = f"raw_{safe_title}_{short_id}.md"
     raw_md_path = temp_dir / raw_md_filename
-    with raw_md_path.open("w", encoding="utf-8") as f:
-        f.write((raw_script or "") + f"\n\nsource: {url}\n")
+    await _write_file(raw_md_path, (raw_script or "") + f"\n\nsource: {url}\n")
 
     # 3) Use raw transcript directly (skip optimization)
     script = raw_script
@@ -100,25 +102,47 @@ async def process_video(
     # detected_language 已由云端返回；如无则保持 None
 
     # 4) Conditional translation
+    translation_task = None
     translation_filename = None
     if (not skip_translate) and (not env_no_translate) and detected_language and translator.should_translate(detected_language, summary_language):
         await emit({**status, "progress": 65, "message": "generating translation..."})
-        translation_content = await translator.translate_text(script, summary_language, detected_language)
-        translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"
-        translation_filename = f"translation_{safe_title}_{short_id}.md"
-        (temp_dir / translation_filename).write_text(translation_with_title, encoding="utf-8")
+
+        async def _generate_translation() -> Optional[str]:
+            try:
+                translation_content = await translator.translate_text(script, summary_language, detected_language)
+                translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"
+                fname = f"translation_{safe_title}_{short_id}.md"
+                await _write_file(temp_dir / fname, translation_with_title)
+                return fname
+            except Exception as exc:
+                logger.error(f"translation failed: {exc}")
+                return None
+
+        translation_task = asyncio.create_task(_generate_translation())
 
     # 5) Summarize
+    summary_task = None
     summary_filename = None
     if not skip_summary:
         await emit({**status, "progress": 80, "message": "generating summary..."})
-        summary = await summarizer.summarize(script, summary_language, video_title)
-        summary_with_source = summary + f"\n\nsource: {url}\n"
+
+        async def _generate_summary() -> Optional[str]:
+            try:
+                summary = await summarizer.summarize(script, summary_language, video_title)
+                summary_with_source = summary + f"\n\nsource: {url}\n"
+                fname = f"summary_{safe_title}_{short_id}.md"
+                await _write_file(temp_dir / fname, summary_with_source)
+                return fname
+            except Exception as exc:
+                logger.error(f"summary failed: {exc}")
+                return None
+
+        summary_task = asyncio.create_task(_generate_summary())
 
     # 6) Persist files
     # transcript file
     tmp_script_path = temp_dir / f"transcript_{short_id}.md"
-    tmp_script_path.write_text(script_with_title, encoding="utf-8")
+    await _write_file(tmp_script_path, script_with_title)
     transcript_filename = f"transcript_{safe_title}_{short_id}.md"
     transcript_path = temp_dir / transcript_filename
     try:
@@ -126,19 +150,34 @@ async def process_video(
     except Exception:
         transcript_path = tmp_script_path  # fallback
 
-    # summary file
-    if not skip_summary:
-        summary_filename = f"summary_{safe_title}_{short_id}.md"
-        (temp_dir / summary_filename).write_text(summary_with_source, encoding="utf-8")
-
     # 7) Optional Edit Note (use optimized transcript if present in future; currently use 'script')
     editnote_filename = None
+    editnote_task = None
     if edit_mode:
         await emit({**status, "progress": 85, "message": f"generating edit note: {edit_mode}..."})
-        edit_note = await editor.generate(edit_mode, script)
-        editnote_filename = f"editnote_{edit_mode}_{safe_title}_{short_id}.md"
-        (temp_dir / editnote_filename).write_text(edit_note + f"\n\nsource: {url}\n", encoding="utf-8")
-        await emit({**status, "progress": 95, "message": "edit note saved"})
+
+        async def _generate_edit_note() -> Optional[str]:
+            try:
+                edit_note = await editor.generate(edit_mode, script)
+                fname = f"editnote_{edit_mode}_{safe_title}_{short_id}.md"
+                await _write_file(temp_dir / fname, edit_note + f"\n\nsource: {url}\n")
+                return fname
+            except Exception as exc:
+                logger.error(f"edit note failed: {exc}")
+                return None
+
+        editnote_task = asyncio.create_task(_generate_edit_note())
+
+    if translation_task:
+        translation_filename = await translation_task
+
+    if summary_task:
+        summary_filename = await summary_task
+
+    if editnote_task:
+        editnote_filename = await editnote_task
+        if editnote_filename:
+            await emit({**status, "progress": 95, "message": "edit note saved"})
 
     # Optional cleanup of downloaded audio
     audio_deleted = False

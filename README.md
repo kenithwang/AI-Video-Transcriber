@@ -18,14 +18,15 @@ An AI-powered video transcription tool (with optional translation) that supports
 - ⚡ **Real-Time Progress**: Live progress tracking and status updates
 - ⚙️ **Conditional Translation**: When the selected summary language differs from the detected transcript language, the system auto-translates with Gemini
 - 📱 **Mobile-Friendly**: Perfect support for mobile devices
- - 🚀 **Parallel Chunk Transcription**: Slice once, transcribe chunks in parallel (default concurrency 3, configurable)
- - 📝 **Optional Edit Note**: Generate structured notes from `Prompts.md` templates (optional; output saved to `temp/`)
+- 🚀 **Parallel Chunk Transcription**: Silence-aligned slicing with configurable concurrency
+- 📝 **Optional Edit Note**: Generate structured notes from `Prompts.md` templates (optional; output saved to `temp/`)
 
 ## 🆕 Recent Improvements
 
-- Whisper models now load asynchronously in the API layer, preventing first-request stalls when the server boots cold.
-- Video re-encoding health checks always probe the latest audio file, ensuring the repaired media is actually validated.
-- Deleting a task immediately persists the updated task list and cleans related artifacts/SSE connections to avoid “ghost” jobs after restarts.
+- Faster-Whisper now tunes device/precision/beam-size via environment variables and defaults to a leaner decoding setup for quicker local runs.
+- Gemini chunk transcription reuses a small model pool and performs a single-pass ffmpeg segmentation, removing duplicate process overhead and “missing chunk” errors.
+- Translation, summary, and edit-note generation execute concurrently while file writes move off the main loop, tightening overall pipeline latency.
+- yt-dlp downloads now fetch metadata and audio in one request, eliminating redundant HTTP calls during video ingest.
 
 ## 🚀 Quick Start (CLI)
 
@@ -145,6 +146,19 @@ Transcription flow:
 - Sends each chunk to Gemini; tries audio-first/prompt-first and upload_file fallback; concatenates raw text.
 - Logs file size in MB (one decimal) and duration as `xx min yy s`.
 - On completion, automatically cleans non-Markdown temp files (keeps only `.md`).
+- Translation, summary, and edit-note generation then run concurrently while file writes are offloaded to threads.
+
+### Runtime configuration (environment variables)
+
+Most options can be set via `.env` or exported before running the CLI/web server:
+
+- `GEMINI_API_KEY` (**required**) – Gemini access token.
+- `GEMINI_MODEL`/`GEMINI_TRANSCRIBE_MODEL`/`GEMINI_TRANSLATE_MODEL`/`GEMINI_SUMMARY_MODEL` – override default models per stage.
+- `TRANSCRIBE_CONCURRENCY` – controls how many Gemini chunk requests run in parallel (default auto-tunes between 3–6 based on CPU).
+- `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `WHISPER_BEAM_SIZE`, `WHISPER_TEMPERATURES`, `WHISPER_CPU_WORKERS` – tune Faster-Whisper runtime when using local transcription.
+- `NO_TRANSLATE` / `DISABLE_TRANSLATION` – set to `1` to skip translation globally.
+- `EDIT_CONCURRENCY` – cap the concurrent Gemini calls when generating edit notes.
+- Proxy values (`HTTP_PROXY`, `HTTPS_PROXY`, `YT_DLP_PROXY`, …) – optional network configuration for yt-dlp and Gemini.
 
 ### Common Examples
 

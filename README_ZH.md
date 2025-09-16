@@ -17,14 +17,15 @@
 - 🌍 **可选翻译**：当目标语言与检测语言不一致时自动翻译
 - ⚙️ **条件式翻译**：当所选总结语言与检测到的语言不一致时，自动调用 Gemini 生成翻译
 - 📱 **移动适配**: 完美支持移动设备
-- 🚀 **并行分片转写**：一次性切片，支持多通道并行转写（默认并行度3，可调）
+- 🚀 **并行分片转写**：静音对齐切片，支持可配置的多线程并行
 - 📝 **可选 Edit Note**：基于 `Prompts.md` 模板生成结构化编辑笔记（可选步骤，结果写入 `temp/`）
 
 ## 🆕 最新改进
 
-- Whisper 模型改为异步懒加载，冷启动时不会再让首个请求长时间阻塞。
-- 视频重封装后会重新探测修复文件，确认音频时长被实际校正。
-- 删除任务会即时落盘并清理关联文件/SSE 连接，避免重启后出现“幽灵任务”。
+- Faster-Whisper 新增多项环境变量，可按需设置设备、精度、beam 大小，默认使用更快的推理参数。
+- Gemini 分片转写复用模型池并采用单次 ffmpeg 切片，避免重复启动进程和漏片问题。
+- 翻译、摘要、编辑笔记任务改为并行执行，文件写入也在后台线程完成，整体耗时更短。
+- yt-dlp 现在一次请求即可获取元数据与音频，减少下载阶段的额外往返。
 
 ## 🚀 快速开始（CLI）
 
@@ -123,8 +124,8 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 - `--summary-model`：摘要模型（同时作为优化默认模型）。默认 `gemini-2.5-pro`。
 - `--optimize-model`：优化模型（仅覆盖优化阶段）。
 - `--translate-model`：翻译模型。默认 `gemini-2.5-pro`。
- - `--edit-mode`：按模板生成 Edit Note（`product_annoucement|market_view|client_call|project_kickoff|internal_meeting`）。
- - `--edit-model`：Edit Note 的模型（默认回退 `GEMINI_EDIT_MODEL` → `GEMINI_SUMMARY_MODEL` → `GEMINI_MODEL`）。
+- `--edit-mode`：按模板生成 Edit Note（`product_annoucement|market_view|client_call|project_kickoff|internal_meeting`）。
+- `--edit-model`：Edit Note 的模型（默认回退 `GEMINI_EDIT_MODEL` → `GEMINI_SUMMARY_MODEL` → `GEMINI_MODEL`）。
 
 说明：CLI 会在启动时自动加载当前目录的 `.env` 文件（如存在）。
 
@@ -138,7 +139,7 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 - 目标语言：`zh`（可用 `--lang` 修改）。
 - 音频文件：处理完成后默认删除；加 `--keep-audio` 可保留。
 - 环境变量：自动加载 `.env`，无需手动 export。
- - Edit Note：默认不生成；未指定 `--edit-mode` 时 CLI 启动会询问是否生成与选择模式；生成文件写入 `temp/`。
+- Edit Note：默认不生成；未指定 `--edit-mode` 时 CLI 启动会询问是否生成与选择模式；生成文件写入 `temp/`。
 
 转写流程：
 - 下载最佳音轨并转为 16kHz 单声道；
@@ -146,6 +147,7 @@ python3 cli.py --url "<视频链接>" --lang zh --outdir temp
 - 每段分别提交至 Gemini；尝试 audio-first / prompt-first 顺序及 upload_file 兜底；
 - 拼接生成逐字稿；日志中大小以 MB（1 位小数）显示、时长以 `xx min yy s` 显示；
 - 结束后自动清理 `temp/` 下非 Markdown 临时文件（仅保留 `.md` 结果）。
+- 随后翻译、摘要、Edit Note 等任务会并行执行，文件写入也在后台线程完成。
 
 ### 常用命令示例
 
@@ -216,9 +218,10 @@ AI-Video-Transcriber/
 - `GEMINI_OPTIMIZE_MODEL`：优化模型（未设则回退到 `GEMINI_SUMMARY_MODEL` 或 `GEMINI_MODEL`）。
 - `GEMINI_TRANSLATE_MODEL`：翻译模型（未设则回退到 `GEMINI_MODEL`）。
 - `NO_TRANSLATE`：设置为 `1`/`true`/`yes` 可全局关闭自动翻译（Web/服务端）。
-- `TRANSCRIBE_CONCURRENCY`：并行转写的并发数（默认 3，建议 2-5 之间，受网络与限速影响）。
+- `TRANSCRIBE_CONCURRENCY`：并行转写并发数（默认会依据 CPU 自动落在 3~6，可按网络/限速情况调整）。
 - `GEMINI_EDIT_MODEL`：Edit Note 生成模型（未设则回退 `GEMINI_SUMMARY_MODEL`/`GEMINI_MODEL`）。
-- `EDIT_CONCURRENCY`：Edit Note 详细转录并行打磨的并发数（默认 4，建议 4–6）。
+- `EDIT_CONCURRENCY`：Edit Note 详细转录并行打磨的并发数（默认 6，可根据限额调低）。
+- `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` / `WHISPER_BEAM_SIZE` / `WHISPER_TEMPERATURES` / `WHISPER_CPU_WORKERS`：本地 Faster-Whisper 推理参数调节。
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`：可选代理。
 - `YT_DLP_PROXY`：仅为 yt-dlp 指定代理。
 

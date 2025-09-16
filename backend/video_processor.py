@@ -57,14 +57,11 @@ class VideoProcessor:
             # 在FastAPI中，IO密集型操作可以直接await
             import asyncio
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # 获取视频信息（放到线程池避免阻塞事件循环）
-                info = await asyncio.to_thread(ydl.extract_info, url, False)
+                # 直接下载并返回元数据，避免额外的 extract_info 往返
+                info = await asyncio.to_thread(ydl.extract_info, url, True)
                 video_title = info.get('title', 'unknown')
                 expected_duration = info.get('duration') or 0
                 logger.info(f"视频标题: {video_title}")
-                
-                # 下载视频（放到线程池避免阻塞事件循环）
-                await asyncio.to_thread(ydl.download, [url])
             
             # 查找生成的m4a文件
             audio_file = str(output_dir / f"audio_{unique_id}.m4a")

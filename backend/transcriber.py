@@ -1,8 +1,9 @@
 import os
 import asyncio
-from faster_whisper import WhisperModel
 import logging
-from typing import Optional
+from typing import Optional, Sequence
+
+from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,18 @@ class Transcriber:
         self.model = None
         self._load_lock = None
         self.last_detected_language = None
+
+        # runtime tuning knobs exposed via environment to keep flexibility
+        self.device = os.getenv("WHISPER_DEVICE", "auto")
+        self.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "auto")
+        self._num_workers = self._resolve_workers()
+        self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "2"))
+        self.best_of = int(os.getenv("WHISPER_BEST_OF", "2"))
+        self.temperature = self._parse_temperature(os.getenv("WHISPER_TEMPERATURES"))
+        self.condition_on_previous_text = self._bool_env("WHISPER_CONDITION_ON_PREVIOUS", True)
+        self.no_speech_threshold = float(os.getenv("WHISPER_NO_SPEECH_THRESHOLD", "0.7"))
+        self.compression_ratio_threshold = float(os.getenv("WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.3"))
+        self.log_prob_threshold = float(os.getenv("WHISPER_LOG_PROB_THRESHOLD", "-1.0"))
         
     async def _ensure_model(self):
         """异步加载模型，避免阻塞事件循环"""
@@ -37,8 +50,9 @@ class Transcriber:
                 self.model = await asyncio.to_thread(
                     WhisperModel,
                     self.model_size,
-                    device="cpu",
-                    compute_type="int8",
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    num_workers=self._num_workers,
                 )
                 logger.info("模型加载完成")
             except Exception as e:
@@ -68,24 +82,31 @@ class Transcriber:
             
             # 直接调用会阻塞事件循环；放入线程避免阻塞
             def _do_transcribe():
-                return self.model.transcribe(
-                    audio_path,
-                    language=language,
-                    beam_size=5,
-                    best_of=5,
-                    temperature=[0.0, 0.2, 0.4],  # 使用温度递增策略
-                    # 更稳健：开启VAD与阈值，降低静音/噪音导致的重复
-                    vad_filter=True,
-                    vad_parameters={
-                        "min_silence_duration_ms": 900,  # 静音检测时长
-                        "speech_pad_ms": 300  # 语音填充
+                kwargs = {
+                    "audio": audio_path,
+                    "language": language,
+                    "beam_size": self.beam_size,
+                    "vad_filter": True,
+                    "vad_parameters": {
+                        "min_silence_duration_ms": 900,
+                        "speech_pad_ms": 300,
                     },
-                    no_speech_threshold=0.7,  # 无语音阈值
-                    compression_ratio_threshold=2.3,  # 压缩比阈值，检测重复
-                    log_prob_threshold=-1.0,  # 日志概率阈值
-                    # 避免错误累积导致的连环重复
-                    condition_on_previous_text=False
-                )
+                    "no_speech_threshold": self.no_speech_threshold,
+                    "compression_ratio_threshold": self.compression_ratio_threshold,
+                    "log_prob_threshold": self.log_prob_threshold,
+                    "condition_on_previous_text": self.condition_on_previous_text,
+                }
+
+                if self.beam_size > 1:
+                    kwargs["best_of"] = max(self.best_of, self.beam_size)
+                else:
+                    kwargs["beam_size"] = 1
+                    kwargs.pop("best_of", None)
+
+                temps = list(self.temperature)
+                kwargs["temperature"] = temps[0] if len(temps) == 1 else temps
+
+                return self.model.transcribe(**kwargs)
             segments, info = await asyncio.to_thread(_do_transcribe)
             
             detected_language = info.language
@@ -172,5 +193,38 @@ class Transcriber:
                 if "**Detected Language:**" in line:
                     lang = line.split(":")[-1].strip()
                     return lang
-        
+
         return None
+
+    def _resolve_workers(self) -> int:
+        env_value = os.getenv("WHISPER_CPU_WORKERS")
+        if env_value:
+            try:
+                workers = int(env_value)
+                if workers > 0:
+                    return workers
+            except ValueError:
+                pass
+        cpu_count = os.cpu_count() or 1
+        # keep a modest default to avoid oversubscription on small CPUs
+        return max(1, min(4, cpu_count))
+
+    def _parse_temperature(self, raw: Optional[str]) -> Sequence[float]:
+        if not raw:
+            return (0.0,)
+        values = []
+        for part in raw.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                values.append(float(part))
+            except ValueError:
+                continue
+        return tuple(values) if values else (0.0,)
+
+    def _bool_env(self, key: str, default: bool = False) -> bool:
+        value = os.getenv(key)
+        if value is None:
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
