@@ -82,12 +82,17 @@ class VideoProcessor:
             # 校验时长，如果和源视频差异较大，尝试一次ffmpeg规范化重封装
             try:
                 import subprocess, shlex
-                probe_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(audio_file)}"
-                out = subprocess.check_output(probe_cmd, shell=True).decode().strip()
+
+                def _probe(path: str) -> float:
+                    cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(path)}"
+                    out_local = subprocess.check_output(cmd, shell=True).decode().strip()
+                    return float(out_local) if out_local else 0.0
+
+                out = _probe(audio_file)
                 actual_duration = float(out) if out else 0.0
             except Exception as _:
                 actual_duration = 0.0
-            
+
             if expected_duration and actual_duration and abs(actual_duration - expected_duration) / expected_duration > 0.1:
                 logger.warning(
                     f"音频时长异常，期望{expected_duration}s，实际{actual_duration}s，尝试重封装修复…"
@@ -99,8 +104,7 @@ class VideoProcessor:
                     # 用修复后的文件替换
                     audio_file = fixed_path
                     # 重新探测
-                    out2 = subprocess.check_output(probe_cmd.replace(shlex.quote(audio_file.rsplit('.',1)[0]+'.m4a'), shlex.quote(audio_file)), shell=True).decode().strip()
-                    actual_duration2 = float(out2) if out2 else 0.0
+                    actual_duration2 = _probe(audio_file)
                     logger.info(f"重封装完成，新时长≈{actual_duration2:.2f}s")
                 except Exception as e:
                     logger.error(f"重封装失败：{e}")

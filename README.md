@@ -21,6 +21,12 @@ An AI-powered video transcription tool (with optional translation) that supports
  - 🚀 **Parallel Chunk Transcription**: Slice once, transcribe chunks in parallel (default concurrency 3, configurable)
  - 📝 **Optional Edit Note**: Generate structured notes from `Prompts.md` templates (optional; output saved to `temp/`)
 
+## 🆕 Recent Improvements
+
+- Whisper models now load asynchronously in the API layer, preventing first-request stalls when the server boots cold.
+- Video re-encoding health checks always probe the latest audio file, ensuring the repaired media is actually validated.
+- Deleting a task immediately persists the updated task list and cleans related artifacts/SSE connections to avoid “ghost” jobs after restarts.
+
 ## 🚀 Quick Start (CLI)
 
 ### Prerequisites

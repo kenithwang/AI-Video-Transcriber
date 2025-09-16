@@ -487,6 +487,8 @@ async def delete_task(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
     
+    task_data = tasks[task_id]
+
     # 如果任务还在运行，先取消它
     if task_id in active_tasks:
         task = active_tasks[task_id]
@@ -494,14 +496,38 @@ async def delete_task(task_id: str):
             task.cancel()
             logger.info(f"任务 {task_id} 已被取消")
         del active_tasks[task_id]
-    
+
     # 从处理URL列表中移除
-    task_url = tasks[task_id].get("url")
+    task_url = task_data.get("url")
     if task_url:
         processing_urls.discard(task_url)
-    
+
+    # 清理关联的临时文件
+    def _safe_remove(file_path: Optional[str]):
+        if not file_path:
+            return
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except Exception as exc:
+            logger.debug(f"删除文件失败 {file_path}: {exc}")
+
+    for path_key in ["script_path", "translation_path", "editnote_path"]:
+        _safe_remove(task_data.get(path_key))
+
+    raw_filename = task_data.get("raw_script_file")
+    if raw_filename:
+        try:
+            (TEMP_DIR / raw_filename).unlink(missing_ok=True)
+        except Exception as exc:
+            logger.debug(f"删除原始转录文件失败 {raw_filename}: {exc}")
+
+    # 移除SSE连接队列
+    if task_id in sse_connections:
+        sse_connections.pop(task_id, None)
+
     # 删除任务记录
     del tasks[task_id]
+    save_tasks(tasks)
     return {"message": "任务已取消并删除"}
 
 @app.get("/api/tasks/active")

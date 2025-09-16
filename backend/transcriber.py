@@ -1,4 +1,5 @@
 import os
+import asyncio
 from faster_whisper import WhisperModel
 import logging
 from typing import Optional
@@ -17,14 +18,28 @@ class Transcriber:
         """
         self.model_size = model_size
         self.model = None
+        self._load_lock = None
         self.last_detected_language = None
         
-    def _load_model(self):
-        """延迟加载模型"""
-        if self.model is None:
+    async def _ensure_model(self):
+        """异步加载模型，避免阻塞事件循环"""
+        if self.model is not None:
+            return
+
+        if self._load_lock is None:
+            self._load_lock = asyncio.Lock()
+
+        async with self._load_lock:
+            if self.model is not None:
+                return
             logger.info(f"正在加载Whisper模型: {self.model_size}")
             try:
-                self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
+                self.model = await asyncio.to_thread(
+                    WhisperModel,
+                    self.model_size,
+                    device="cpu",
+                    compute_type="int8",
+                )
                 logger.info("模型加载完成")
             except Exception as e:
                 logger.error(f"模型加载失败: {str(e)}")
@@ -47,12 +62,11 @@ class Transcriber:
                 raise Exception(f"音频文件不存在: {audio_path}")
             
             # 加载模型
-            self._load_model()
+            await self._ensure_model()
             
             logger.info(f"开始转录音频: {audio_path}")
             
             # 直接调用会阻塞事件循环；放入线程避免阻塞
-            import asyncio
             def _do_transcribe():
                 return self.model.transcribe(
                     audio_path,
