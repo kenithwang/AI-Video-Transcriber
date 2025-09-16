@@ -212,6 +212,7 @@ AI-Video-Transcriber/
 - `NO_TRANSLATE`：设置为 `1`/`true`/`yes` 可全局关闭自动翻译（Web/服务端）。
 - `TRANSCRIBE_CONCURRENCY`：并行转写的并发数（默认 3，建议 2-5 之间，受网络与限速影响）。
 - `GEMINI_EDIT_MODEL`：Edit Note 生成模型（未设则回退 `GEMINI_SUMMARY_MODEL`/`GEMINI_MODEL`）。
+- `EDIT_CONCURRENCY`：Edit Note 详细转录并行打磨的并发数（默认 4，建议 4–6）。
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`：可选代理。
 - `YT_DLP_PROXY`：仅为 yt-dlp 指定代理。
 

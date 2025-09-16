@@ -138,6 +138,7 @@ async def process_video(
         edit_note = await editor.generate(edit_mode, script)
         editnote_filename = f"editnote_{edit_mode}_{safe_title}_{short_id}.md"
         (temp_dir / editnote_filename).write_text(edit_note + f"\n\nsource: {url}\n", encoding="utf-8")
+        await emit({**status, "progress": 95, "message": "edit note saved"})
 
     # Optional cleanup of downloaded audio
     audio_deleted = False

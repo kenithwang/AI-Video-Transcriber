@@ -215,6 +215,7 @@ Environment Variables (auto-loaded from `.env`):
 - `GEMINI_EDIT_MODEL`: Model for Edit Note (fallback to `GEMINI_SUMMARY_MODEL` then `GEMINI_MODEL`).
 - `NO_TRANSLATE`: If `1`/`true`/`yes`, globally disable translation (web/server).
 - `TRANSCRIBE_CONCURRENCY`: Concurrency for parallel transcription (default 3; typical 2–6).
+- `EDIT_CONCURRENCY`: Concurrency for parallel polishing of the detailed transcript in Edit Note (default 4; typical 4–6).
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`: Optional proxies.
 - `YT_DLP_PROXY`: Proxy specifically for yt-dlp.
 
