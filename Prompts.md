@@ -88,36 +88,35 @@ Your output must strictly adhere to Markdown formatting.
 ## Market View Mode (`market_view`)
 
 ```
-Please generate a concise, clear, and professional meeting memo based on the following meeting audio transcript.
-The memo should be primarily in Simplified Chinese, with English terms used where appropriate (like names, specific technical terms). The output must strictly adhere to Markdown formatting.
+Please generate a comprehensive, structured market analysis memo based on the following meeting audio transcript.
+The memo should be primarily in Simplified Chinese, with English terms used where appropriate (like names, specific technical terms). The output must strictly adhere to Markdown formatting and capture every analytical point raised by the speakers.
 Output Structure:
 
 摘要 (Summary)
-(Provide a brief narrative paragraph summarizing the main points and outcomes of the meeting in Simplified Chinese.)
+(Write 3–4 sentences covering会议背景、市场总体观点、时间范围/地域范围、核心结论与情绪基调。明确提及最重要的宏观或行业驱动因素，并引用关键数据或指标。)
 
 关键要点 (Key Takeaways)
-(List the core conclusions, decisions, or significant points discussed using bullet points in Simplified Chinese.)
-要点 1
-要点 2
-...
+(使用项目符号列出所有重要结论、预测、风险、机会或行动建议。每条需包含观点+证据/数据/引用发言人，避免笼统表述，确保无遗漏。)
+
+市场观点详解 (Market View Deep Dive)
+(对逐字稿中每个分析主题进行详尽展开。为每个主题新增二级标题，例如“### [主题名称]”。在每个主题下按以下顺序细化：
+* 观点综述：交代市场背景、立场与核心逻辑。
+* 证据与数据：列出支持观点的所有数据点、对比、客户/竞争者反馈、宏观指标或事件时间线。
+* 影响与建议：说明对市场/行业/细分赛道的影响，提出潜在风险、机会、后续跟进或投资建议。
+如有多位发言人对同一主题提供观点，逐一引用，标明姓名或编号，并说明是否存在分歧。不要遗漏任何分析点。)
 
 关键议题 (Key Topics)
-(Identify the main topics discussed. For each topic, summarize the viewpoints expressed by different speakers (using their identified names or A, B, C markers). Highlight agreements and disagreements where applicable. Only mention speakers who actively contributed to the discussion on that specific topic. Use Simplified Chinese.)
-[议题名称]:
-...
-[议题名称]:
-...
-...
+(概括所有讨论主题，并总结不同发言人的立场、共识与分歧。使用发言人姓名或 A/B/C 标记，仅包含实际参与该议题的发言人。确保议题覆盖「市场观点详解」中列出的所有主题。)
 
 详细转录记录 (Detailed Transcript - Polished & Segmented)
 (Based on the 'Original Transcript Text' provided below:
 Language Preservation and Translation: If the original dialogue is primarily English, keep it English. If the original dialogue is primarily Simplified Chinese or Traditional Chinese, keep it Simplified Chinese. If it's another language, translate the dialogue to Simplified Chinese.
 Slightly polish the dialogue for better readability and fluency. Remove excessive colloquialisms, repetitions, and filler words (like "um", "uh", "hmm", "ah", "er"), while strictly preserving the original meaning and intent.
 Identify Speakers and Format: Analyze the transcript content for speaker introductions (self-introductions or introductions by others). Whenever a speaker's name is clearly identifiable, use their actual name (e.g., "张三:", "John Doe:") as the speaker marker. Only use generic markers (A:, B:, C:, etc.) for speakers whose names cannot be confidently determined from the dialogue. Format the polished dialogue using these identified or generic speaker markers.
-Semantic Paragraph Segmentation: Strictly segment the dialogue into natural paragraphs based on semantic shifts. Start a new paragraph each time the speaker changes or when the topic shifts significantly. Avoid outputting large, continuous blocks of text; prioritize readability through clear paragraph breaks.)
+Semantic Paragraph Segmentation: Strictly segment the dialogue into natural paragraphs based on semantic shifts. Start a new paragraph each time the speaker changes or when the topic shifts significantly. Avoid outputting large, continuous blocks of text; prioritize readability through clear paragraph breaks. 对于含有大量数据或多层观点的段落，可使用嵌套无序列表以保留层级。)
 Original Transcript Text:
 {transcript_placeholder}
-Please ensure the output is in Simplified Chinese for the main sections (Summary, Key Takeaways, Key Topics) as specified, and the Detailed Transcript is either English (if original was English) or Simplified Chinese (otherwise). Use Markdown formatting throughout, and accurately reflect the content of the transcript while incorporating the requested polishing and formatting for the Detailed Transcript section.
+Please ensure the output is in Simplified Chinese for the main sections (Summary, Key Takeaways, Market View Deep Dive, Key Topics) as specified, and the Detailed Transcript is either English (if original was English) or Simplified Chinese (otherwise). Use Markdown formatting throughout, and accurately reflect the content of the transcript while incorporating the requested polishing and formatting for the Detailed Transcript section.
 ```
 
 ---
