@@ -1,8 +1,11 @@
 import os
-import yt_dlp
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
+
+import yt_dlp
+from yt_dlp.update import Updater
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,8 @@ class VideoProcessor:
             'no_warnings': True,
             'noplaylist': True,  # 强制只下载单个视频，不下载播放列表
         }
+        self._update_hint_checked = False
+        self._cached_update_hint: Optional[str] = None
     
     async def download_and_convert(self, url: str, output_dir: Path) -> tuple[str, str]:
         """
@@ -55,13 +60,25 @@ class VideoProcessor:
             
             # 直接同步执行，不使用线程池
             # 在FastAPI中，IO密集型操作可以直接await
-            import asyncio
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # 直接下载并返回元数据，避免额外的 extract_info 往返
-                info = await asyncio.to_thread(ydl.extract_info, url, True)
-                video_title = info.get('title', 'unknown')
-                expected_duration = info.get('duration') or 0
-                logger.info(f"视频标题: {video_title}")
+            try:
+                info = await self._run_ytdlp(url, ydl_opts)
+            except yt_dlp.utils.DownloadError as exc:
+                if 'Requested format is not available' not in str(exc):
+                    raise
+
+                logger.warning("指定格式不可用，尝试自动回退格式…")
+                fallback_format = await asyncio.to_thread(self._resolve_fallback_format, url)
+                if not fallback_format:
+                    raise
+
+                logger.info(f"使用回退格式下载: {fallback_format}")
+                retry_opts = ydl_opts.copy()
+                retry_opts['format'] = fallback_format
+                info = await self._run_ytdlp(url, retry_opts)
+
+            video_title = info.get('title', 'unknown')
+            expected_duration = info.get('duration') or 0
+            logger.info(f"视频标题: {video_title}")
             
             # 查找生成的m4a文件
             audio_file = str(output_dir / f"audio_{unique_id}.m4a")
@@ -110,9 +127,15 @@ class VideoProcessor:
             return audio_file, video_title
             
         except Exception as e:
-            logger.error(f"下载视频失败: {str(e)}")
-            raise Exception(f"下载视频失败: {str(e)}")
-    
+            message = str(e)
+            if self._needs_update_hint(e):
+                hint = self._get_update_hint()
+                if hint and hint not in message:
+                    message = f"{message}；{hint}"
+                    logger.warning(hint)
+            logger.error(f"下载视频失败: {message}")
+            raise Exception(f"下载视频失败: {message}") from e
+
     def get_video_info(self, url: str) -> dict:
         """
         获取视频信息
@@ -137,3 +160,84 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"获取视频信息失败: {str(e)}")
             raise Exception(f"获取视频信息失败: {str(e)}")
+
+    async def _run_ytdlp(self, url: str, opts: dict, download: bool = True):
+        def _extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=download)
+
+        return await asyncio.to_thread(_extract)
+
+    def _resolve_fallback_format(self, url: str) -> Optional[str]:
+        probe_opts = self.ydl_opts.copy()
+        probe_opts.pop('format', None)
+        probe_opts.pop('postprocessors', None)
+        probe_opts.pop('postprocessor_args', None)
+        probe_opts['noplaylist'] = True
+        probe_opts['quiet'] = True
+        probe_opts['skip_download'] = True
+
+        try:
+            with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as exc:  # pragma: no cover - yt-dlp errors bubble up
+            logger.error(f"获取可用格式失败: {exc}")
+            return None
+
+        formats = info.get('formats') or []
+        if not formats:
+            return info.get('format_id') or 'best'
+
+        def _bitrate(fmt: dict) -> float:
+            for key in ('abr', 'tbr', 'vbr'):
+                val = fmt.get(key)
+                if isinstance(val, (int, float)):
+                    return float(val)
+            return 0.0
+
+        audio_only = [
+            f for f in formats
+            if (f.get('vcodec') in (None, 'none')) and f.get('acodec') not in (None, 'none')
+        ]
+        if audio_only:
+            best_audio = max(audio_only, key=_bitrate)
+            return best_audio.get('format_id') or 'bestaudio'
+
+        progressive = [
+            f for f in formats
+            if f.get('acodec') not in (None, 'none') and f.get('vcodec') not in (None, 'none')
+        ]
+        if progressive:
+            best_progressive = max(progressive, key=_bitrate)
+            return best_progressive.get('format_id') or 'best'
+
+        return formats[-1].get('format_id') or 'best'
+
+    def _needs_update_hint(self, exc: Exception) -> bool:
+        text = str(exc)
+        return 'Requested format is not available' in text
+
+    def _get_update_hint(self) -> Optional[str]:
+        if self._update_hint_checked:
+            return self._cached_update_hint
+
+        self._update_hint_checked = True
+        hint: Optional[str]
+        try:
+            with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
+                update_info = Updater(ydl).query_update()
+        except Exception as exc:  # pragma: no cover - 网络/权限问题无需打断流程
+            logger.debug(f"检查 yt-dlp 更新失败: {exc}")
+            hint = None
+        else:
+            if update_info:
+                latest = update_info.version or update_info.tag
+                hint = (
+                    f"检测到 yt-dlp 有可用更新（最新: {latest}，当前: {yt_dlp.__version__}）。"
+                    "请运行 `pip install --upgrade yt-dlp` 后重试。"
+                )
+            else:
+                hint = None
+
+        self._cached_update_hint = hint
+        return hint
