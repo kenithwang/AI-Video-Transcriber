@@ -65,6 +65,7 @@ async def process_video(
     summarizer = Summarizer()
     translator = Translator()
     editor = Editor()
+    warnings: list[str] = []
 
     # 环境开关：如果设置 NO_TRANSLATE/DISABLE_TRANSLATION，则跳过翻译
     def _env_flag(name: str, default: str = "0") -> bool:
@@ -115,7 +116,9 @@ async def process_video(
                 await _write_file(temp_dir / fname, translation_with_title)
                 return fname
             except Exception as exc:
-                logger.error(f"translation failed: {exc}")
+                msg = f"translation failed: {exc}"
+                logger.error(msg)
+                warnings.append(msg)
                 return None
 
         translation_task = asyncio.create_task(_generate_translation())
@@ -134,7 +137,9 @@ async def process_video(
                 await _write_file(temp_dir / fname, summary_with_source)
                 return fname
             except Exception as exc:
-                logger.error(f"summary failed: {exc}")
+                msg = f"summary failed: {exc}"
+                logger.error(msg)
+                warnings.append(msg)
                 return None
 
         summary_task = asyncio.create_task(_generate_summary())
@@ -163,7 +168,9 @@ async def process_video(
                 await _write_file(temp_dir / fname, edit_note + f"\n\nsource: {url}\n")
                 return fname
             except Exception as exc:
-                logger.error(f"edit note failed: {exc}")
+                msg = f"edit note failed: {exc}"
+                logger.error(msg)
+                warnings.append(msg)
                 return None
 
         editnote_task = asyncio.create_task(_generate_edit_note())
@@ -208,7 +215,9 @@ async def process_video(
     except Exception:
         pass
 
-    await emit({**status, "progress": 100, "message": "completed", "status": "completed"})
+    final_status = {**status, "progress": 100, "status": "completed"}
+    final_status["message"] = "completed (with warnings)" if warnings else "completed"
+    await emit(final_status)
 
     return {
         "status": "completed",
@@ -222,4 +231,5 @@ async def process_video(
         "short_id": short_id,
         "audio_file": None if audio_deleted else audio_path,
         "audio_deleted": audio_deleted,
+        "warnings": warnings,
     }

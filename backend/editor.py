@@ -61,35 +61,48 @@ class Editor:
             return ""
 
     def _smart_chunk_text(self, text: str, max_chars_per_chunk: int = 4000) -> list:
-        chunks = []
-        paragraphs = [p for p in (text or '').split('\n\n') if p.strip()]
-        cur = ''
-        for p in paragraphs:
-            if len(cur) + len(p) + 2 > max_chars_per_chunk and cur:
-                chunks.append(cur.strip())
-                cur = p
-            else:
-                cur = (cur + ("\n\n" if cur else "") + p) if p else cur
-        if cur.strip():
-            chunks.append(cur.strip())
-        # further split oversized chunks by sentence enders
-        final = []
-        for c in chunks:
-            if len(c) <= max_chars_per_chunk:
-                final.append(c)
+        if not text:
+            return []
+
+        import re as _re
+
+        parts = _re.split(r'(\n{2,})', text)
+        chunks: list[str] = []
+        buffer = ''
+
+        for part in parts:
+            if part is None or part == '':
                 continue
-            import re as _re
-            sentences = _re.split(r'([。！？.!?]\s*)', c)
+
+            candidate = buffer + part
+            if len(candidate) > max_chars_per_chunk and buffer:
+                chunks.append(buffer.rstrip('\n'))
+                buffer = part.lstrip('\n')
+            else:
+                buffer = candidate
+
+        if buffer:
+            chunks.append(buffer.rstrip('\n'))
+
+        final: list[str] = []
+        for chunk in chunks:
+            if len(chunk) <= max_chars_per_chunk:
+                final.append(chunk)
+                continue
+
+            sentences = _re.split(r'([。！？.!?]\s*)', chunk)
             buf = ''
-            for i, part in enumerate(sentences):
+            for idx, part in enumerate(sentences):
+                if not part:
+                    continue
                 buf += part
-                if i % 2 == 1:  # after a terminator
-                    if len(buf) >= max_chars_per_chunk:
-                        final.append(buf.strip())
-                        buf = ''
-            if buf.strip():
-                final.append(buf.strip())
-        return final
+                if idx % 2 == 1 and len(buf) >= max_chars_per_chunk:
+                    final.append(buf.rstrip('\n'))
+                    buf = ''
+            if buf:
+                final.append(buf.rstrip('\n'))
+
+        return [item for item in final if item]
 
     async def _generate_polished_transcript(self, transcript_text: str) -> str:
         """Chunked generation for the Detailed Transcript to avoid truncation."""

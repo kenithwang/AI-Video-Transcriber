@@ -2,7 +2,18 @@ import logging
 from typing import Optional
 import re
 import os
+
 import google.generativeai as genai
+
+try:
+    from langdetect import detect as _lang_detect
+    from langdetect import DetectorFactory as _LangDetectFactory
+    from langdetect.lang_detect_exception import LangDetectException
+
+    _LangDetectFactory.seed = 0
+except Exception:  # pragma: no cover - optional dependency
+    _lang_detect = None
+    LangDetectException = Exception  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +22,8 @@ class Translator:
     
     def __init__(self):
         self.client = None
+        self._model_name: Optional[str] = None
+        self._model_cache: Optional[genai.GenerativeModel] = None
         self._init_gemini_client()
         
         # 语言映射
@@ -45,40 +58,40 @@ class Translator:
             self.client = None
     
     def _detect_source_language(self, text: str) -> str:
-        """检测源文本语言"""
-        # 简单的语言检测逻辑
+        """检测源文本语言，优先使用 langdetect，回退到启发式。"""
         if "**检测语言:**" in text:
-            lines = text.split('\n')
-            for line in lines:
+            for line in text.split('\n'):
                 if "**检测语言:**" in line:
                     lang = line.split(":")[-1].strip()
-                    return lang
-        
-        # 基于字符统计的简单检测
-        total_chars = len(text)
+                    if lang:
+                        return lang.lower()
+
+        sample = (text or "").strip()
+        if _lang_detect and sample:
+            try:
+                detected = _lang_detect(sample[:1000])
+                if detected:
+                    return detected.lower()
+            except LangDetectException:
+                pass
+
+        total_chars = len(sample)
         if total_chars == 0:
             return "en"
-        
-        # 统计中文字符
-        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-        chinese_ratio = chinese_chars / total_chars
-        
-        # 统计日文字符
-        japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))
-        japanese_ratio = japanese_chars / total_chars
-        
-        # 统计韩文字符
-        korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))
-        korean_ratio = korean_chars / total_chars
-        
-        if chinese_ratio > 0.1:
+
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', sample))
+        if chinese_chars / total_chars > 0.1:
             return "zh"
-        elif japanese_ratio > 0.05:
+
+        japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', sample))
+        if japanese_chars / total_chars > 0.05:
             return "ja"
-        elif korean_ratio > 0.05:
+
+        korean_chars = len(re.findall(r'[\uac00-\ud7af]', sample))
+        if korean_chars / total_chars > 0.05:
             return "ko"
-        else:
-            return "en"
+
+        return "en"
     
     def _smart_chunk_text(self, text: str, max_chars_per_chunk: int = 4000) -> list:
         """智能分块文本用于翻译"""
@@ -187,10 +200,10 @@ class Translator:
 只返回翻译结果，不要添加任何说明。"""
 
         try:
-            _base = os.getenv("GEMINI_TRANSLATE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
-            model_name = _base.split("/", 1)[-1] if _base.startswith("models/") else _base
-            model = genai.GenerativeModel(model_name)
-            logger.info(f"Gemini translate model: {model_name}")
+            model = self._get_model()
+            if not model:
+                logger.warning("Gemini translate model 未初始化，返回原文")
+                return text
             response = model.generate_content(
                 [f"System: {system_prompt}", f"User: {user_prompt}"],
                 generation_config=genai.types.GenerationConfig(
@@ -198,7 +211,7 @@ class Translator:
                     max_output_tokens=4000,
                 ),
             )
-            return response.text
+            return response.text or text
             
         except Exception as e:
             logger.error(f"单文本翻译失败: {e}")
@@ -232,10 +245,11 @@ class Translator:
 只返回翻译结果。"""
 
             try:
-                _base = os.getenv("GEMINI_TRANSLATE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
-                model_name = _base.split("/", 1)[-1] if _base.startswith("models/") else _base
-                model = genai.GenerativeModel(model_name)
-                logger.info(f"Gemini translate model (chunk): {model_name}")
+                model = self._get_model()
+                if not model:
+                    logger.warning("Gemini translate model 未初始化，返回原文片段")
+                    translated_chunks.append(chunk)
+                    continue
                 response = model.generate_content(
                     [f"System: {system_prompt}", f"User: {user_prompt}"],
                     generation_config=genai.types.GenerationConfig(
@@ -243,7 +257,7 @@ class Translator:
                         max_output_tokens=4000,
                     ),
                 )
-                translated_chunk = response.text
+                translated_chunk = response.text or chunk
                 translated_chunks.append(translated_chunk)
                 
             except Exception as e:
@@ -253,7 +267,7 @@ class Translator:
         
         # 合并翻译结果
         return "\n\n".join(translated_chunks)
-    
+
     def should_translate(self, source_language: str, target_language: str) -> bool:
         """判断是否需要翻译"""
         if not source_language or not target_language:
@@ -273,3 +287,23 @@ class Translator:
             return False
         
         return True
+
+    def _get_model(self) -> Optional[genai.GenerativeModel]:
+        if not self.client:
+            return None
+
+        if self._model_cache:
+            return self._model_cache
+
+        base = os.getenv("GEMINI_TRANSLATE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
+        model_name = base.split("/", 1)[-1] if base.startswith("models/") else base
+        try:
+            model = genai.GenerativeModel(model_name)
+        except Exception as exc:
+            logger.error(f"初始化 Gemini translate 模型失败: {exc}")
+            return None
+
+        self._model_name = model_name
+        self._model_cache = model
+        logger.info(f"Gemini translate model: {model_name}")
+        return model

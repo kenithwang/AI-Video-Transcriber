@@ -35,6 +35,27 @@ def print_env_warnings():
         print("[!] 未设置 GEMINI_API_KEY：无法进行云端转写与优化/翻译/摘要。")
 
 
+def preflight_checks() -> list[str]:
+    """执行 CLI 运行前的依赖检查，返回需要提示给用户的消息。"""
+    notices: list[str] = []
+
+    try:
+        import yt_dlp  # type: ignore
+        from yt_dlp.update import Updater  # type: ignore
+
+        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:  # type: ignore[attr-defined]
+            update_info = Updater(ydl).query_update()
+        if update_info:
+            latest = update_info.version or update_info.tag
+            notices.append(
+                f"[!] 检测到 yt-dlp 可更新：当前 {yt_dlp.__version__}，最新 {latest}。建议运行 `pip install --upgrade yt-dlp`。"
+            )
+    except Exception as exc:
+        logging.debug(f"预检 yt-dlp 更新失败: {exc}")
+
+    return notices
+
+
 async def run_pipeline(url: str, lang: str, outdir: Path, *,
                       no_optimize: bool = False,
                       no_translate: bool = False,
@@ -85,6 +106,12 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
         if val:
             print(f" - {key}: {outdir / val}")
 
+    warnings = res.get('warnings') or []
+    if warnings:
+        print("\n警告：")
+        for item in warnings:
+            print(f" - {item}")
+
 
 def main():
     # 先尝试加载 .env
@@ -118,6 +145,9 @@ def main():
         sys.exit(1)
 
     print_env_warnings()
+
+    for notice in preflight_checks():
+        print(notice)
 
     url = args.url
     if not url:
