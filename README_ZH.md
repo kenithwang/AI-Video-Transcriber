@@ -25,7 +25,7 @@
 - Faster-Whisper 新增多项环境变量，可按需设置设备、精度、beam 大小，默认使用更快的推理参数。
 - Gemini 分片转写复用模型池并采用单次 ffmpeg 切片，避免重复启动进程和漏片问题。
 - 翻译、摘要、编辑笔记任务改为并行执行，文件写入也在后台线程完成，整体耗时更短。
-- yt-dlp 现在一次请求即可获取元数据与音频，减少下载阶段的额外往返。
+- 针对哔哩哔哩自动补充 Referer/UA，开启断点续传，并支持 `BILIBILI_COOKIE_FILE`，下载过程更稳定。
 
 ## 🚀 快速开始（CLI）
 
@@ -99,6 +99,11 @@ sudo yum install ffmpeg
 export GEMINI_API_KEY="你的_API_Key"
 # 其他变量可在 `.env` 中配置（见下文）
 ```
+
+可选环境变量：
+
+- `BILIBILI_COOKIE_FILE`：指向 Netscape 格式的 cookie 文件，转交 yt-dlp 下载哔哩哔哩时使用。
+- `YDL_USER_AGENT`：覆盖默认的桌面浏览器 UA，必要时可模拟特定浏览器。
 
 ### 使用 CLI
 

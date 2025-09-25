@@ -3,6 +3,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import yt_dlp
 from yt_dlp.update import Updater
@@ -13,6 +14,12 @@ class VideoProcessor:
     """视频处理器，使用yt-dlp下载和转换视频"""
     
     def __init__(self):
+        self._default_user_agent = os.getenv(
+            "YDL_USER_AGENT",
+            # 使用常见的桌面浏览器 UA，避免被判定为机器人后限速或截断
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        )
         self.ydl_opts = {
             'format': 'bestaudio/best',  # 优先下载最佳音频源
             'outtmpl': '%(title)s.%(ext)s',
@@ -28,10 +35,13 @@ class VideoProcessor:
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,  # 强制只下载单个视频，不下载播放列表
+            'continuedl': True,
+            'retries': 10,
+            'fragment_retries': 10,
         }
         self._update_hint_checked = False
         self._cached_update_hint: Optional[str] = None
-    
+
     async def download_and_convert(self, url: str, output_dir: Path) -> tuple[str, str]:
         """
         下载视频并转换为m4a格式
@@ -55,7 +65,29 @@ class VideoProcessor:
             # 更新yt-dlp选项
             ydl_opts = self.ydl_opts.copy()
             ydl_opts['outtmpl'] = output_template
-            
+
+            parsed = urlparse(url)
+            hostname = parsed.hostname or ""
+            if hostname.endswith("bilibili.com"):
+                # 哔哩哔哩对 Referer/UA 较为敏感，缺失时常出现下载被截断
+                headers = {
+                    'Referer': 'https://www.bilibili.com/',
+                    'User-Agent': self._default_user_agent,
+                }
+                existing_headers = dict(ydl_opts.get('http_headers') or {})
+                existing_headers.update(headers)
+                ydl_opts['http_headers'] = existing_headers
+
+                cookie_file = os.getenv('BILIBILI_COOKIE_FILE')
+                if cookie_file:
+                    cookie_path = Path(cookie_file).expanduser()
+                    if cookie_path.exists():
+                        ydl_opts['cookiefile'] = str(cookie_path)
+                    else:
+                        logger.warning(
+                            "BILIBILI_COOKIE_FILE 指定的文件不存在: %s", cookie_path
+                        )
+
             logger.info(f"开始下载视频: {url}")
             
             # 直接同步执行，不使用线程池

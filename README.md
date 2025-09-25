@@ -25,7 +25,7 @@ An open-source AI video transcription (optional translation) tool that works wit
 - Faster-Whisper gains multiple environment variables so you can customize device, precision, and beam size (default settings favor speed).
 - Gemini chunk transcription reuses a model pool and calls ffmpeg only once, reducing process spin-up and avoiding missing segments.
 - Translation, summary, and edit-note tasks now run in parallel; file writes occur in background threads for better overall throughput.
-- yt-dlp now fetches metadata and audio in a single request, cutting download round trips.
+- Bilibili downloads are more reliable with automatic Referer/User-Agent headers, resumable transfers, and optional `BILIBILI_COOKIE_FILE` support.
 
 ## 🚀 Quick start (CLI)
 
@@ -56,6 +56,11 @@ For additional options (translation toggle, target language, custom prompts, out
 ```bash
 python start.py --help
 ```
+
+### Optional environment
+
+- `BILIBILI_COOKIE_FILE`: Path to a Netscape-format cookie file passed to yt-dlp for Bilibili downloads.
+- `YDL_USER_AGENT`: Override the default desktop-style User-Agent if you need to mimic a specific browser.
 
 ## 🛠️ Development
 
