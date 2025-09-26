@@ -16,7 +16,7 @@ An open-source AI video transcription (optional translation) tool that works wit
 - 🗣️ **High-quality transcription**: Powered by Gemini (`gemini-2.5-pro`) for accurate speech-to-text.
 - 🌍 **Optional translation**: Automatically translates when the target language differs from the detected language.
 - ⚙️ **Conditional translation**: Only triggers translation when the requested summary language differs from the detected language.
-- 📱 **Responsive UI**: Fully optimized for mobile devices.
+- 🧰 **CLI-first workflow**: All processing is driven from the command line with clear progress output.
 - 🚀 **Parallel chunk processing**: Silence-aligned segmentation with configurable parallel workers.
 - 📝 **Optional Edit Note**: Generates a structured edit note based on `Prompts.md`, stored under `temp/`.
 
@@ -26,7 +26,7 @@ An open-source AI video transcription (optional translation) tool that works wit
 - Chunk summaries now run in parallel (default concurrency 3) to shorten turnaround; tune via `GEMINI_SUMMARY_CONCURRENCY`.
 - Gemini calls auto-retry with a larger `max_output_tokens` budget when the API stops early, preventing empty chunk summaries.
 - CLI now supports transcript-only mode via `--transcript` / `--transcript-file`, reusing the same translation, summary, and edit-note pipeline without downloading video.
-- Backend exposes `/api/process-transcript`, letting the web workflow accept raw transcripts while streaming task updates over the existing SSE channel.
+- Processing pipeline is now fully CLI-driven; transcript-only runs reuse the same translation, summary, and edit-note steps without needing a web front end.
 - Translation now raises explicit warnings instead of silently returning the source text when Gemini fails, and long-text chunking preserves original punctuation so tone and intent remain intact.
 - On startup the server marks unfinished tasks as failed and cleans up their temporary files, so the dashboard no longer shows ghost jobs after a restart.
 
@@ -51,13 +51,13 @@ An open-source AI video transcription (optional translation) tool that works wit
 ### Basic usage
 
 ```bash
-python start.py --url https://www.youtube.com/watch?v=xxxx
+python cli.py --url https://www.youtube.com/watch?v=xxxx --lang zh
 ```
 
 For additional options (translation toggle, target language, custom prompts, output directory, etc.) please run:
 
 ```bash
-python start.py --help
+python cli.py --help
 ```
 
 ### Use an existing transcript
@@ -84,9 +84,9 @@ python cli.py --transcript-file path/to/transcript.md --lang zh --with-summary
 
 ## 🛠️ Development
 
-- Frontend assets live under `static/` and can be customized for branding.
-- Prompts used by the optional edit note live in `Prompts.md`.
-- Logs are written to `server.log`; you can adjust logging level in `start.py`.
+- Core processing lives under `backend/` (pipeline, downloader, translator, editor).
+- Prompts for the optional edit note are defined in `Prompts.md`.
+- CLI entry point is `cli.py`; logging is configured directly in the CLI and backend modules.
 
 ## 📄 License
 
