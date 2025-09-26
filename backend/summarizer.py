@@ -1119,7 +1119,7 @@ Summary Requirements:
 2. Maintain clear logical structure, highlighting the core arguments
 3. Include important discussions, viewpoints, and conclusions
 4. Use concise and clear language while preserving key speaker styles
-5. Target 5-7 paragraphs with an overall length of roughly 600-900 words"""
+5. Target 6-8 paragraphs with an overall length of roughly 750-1100 words"""
 
         user_prompt = f"""Based on the following content, write a comprehensive, well-structured summary in {language_name}:
 
@@ -1129,8 +1129,8 @@ Requirements:
 - Focus on natural paragraphs, avoiding decorative headings
 - Cover all key ideas and arguments, preserving important examples and data
 - Ensure balanced coverage of both early and later content
-- Keep each paragraph within 90-150 words and use double line breaks between paragraphs
-- Maintain a total length near 600-900 words"""
+- Keep each paragraph within 110-160 words and use double line breaks between paragraphs
+- Maintain a total length near 750-1100 words"""
 
         logger.info(f"正在生成{language_name}摘要...")
         
@@ -1164,9 +1164,9 @@ Requirements:
 
 This is part {index + 1} of {total} of the complete content (Part {index + 1}/{total}).
 
-Output preferences: Focus on natural paragraphs, use minimal bullet points if necessary; highlight new information and its relationship to the main narrative; avoid vague repetition and formatted headings; target length 90-140 words."""
+Output preferences: Focus on natural paragraphs, use minimal bullet points if necessary; highlight new information and its relationship to the main narrative; avoid vague repetition and formatted headings; target length 130-180 words."""
 
-            user_prompt = f"""[Part {index + 1}/{total}] Summarize the key points of the following text in {language_name} (natural paragraphs preferred, minimal bullet points, 90-140 words):
+            user_prompt = f"""[Part {index + 1}/{total}] Summarize the key points of the following text in {language_name} (natural paragraphs preferred, minimal bullet points, 130-180 words):
 
 {chunk_text}
 
@@ -1179,7 +1179,7 @@ Avoid using any subheadings or decorative separators, output content only."""
                         system_prompt,
                         user_prompt,
                         temperature=0.3,
-                        max_output_tokens=1000,
+                        max_output_tokens=1400,
                     )
                     return index, chunk_summary
                 except Exception as err:
@@ -1254,9 +1254,9 @@ Avoid using any subheadings or decorative separators, output content only."""
 Integration Requirements:
 1. Remove duplicate content and maintain clear logic
 2. Reorganize content by themes or chronological order
-3. Produce 5-7 paragraphs, each 90-140 words, separated by double line breaks
+3. Produce 6-8 paragraphs, each 110-160 words, separated by double line breaks
 4. Ensure output is in Markdown format with double line breaks between paragraphs
-5. Maintain an overall length close to 600-900 words"""
+5. Maintain an overall length close to 750-1100 words"""
 
             user_prompt = f"""Please integrate the following segmented summaries into a complete, coherent summary in {language_name}:
 
@@ -1297,7 +1297,7 @@ Requirements:
 
             system_prompt = (
                 f"You are an expert summarizer. Merge adjacent part summaries into one cohesive text in {language_name}. "
-                "Preserve the logical order and key nuances while eliminating redundancy. Aim for compact paragraphs (90-140 words each)."
+                "Preserve the logical order and key nuances while eliminating redundancy. Aim for compact paragraphs (110-160 words each)."
             )
             user_prompt = (
                 f"Combine the following part summaries into a single, coherent summary in {language_name}:\n\n"
@@ -1305,7 +1305,7 @@ Requirements:
                 "Requirements:\n"
                 "- Maintain chronological or thematic flow\n"
                 "- Keep important details and transitions\n"
-                "- Output 2-3 concise paragraphs separated by blank lines\n"
+                "- Output 2-3 detailed paragraphs (110-160 words each) separated by blank lines\n"
                 "- Use the requested language throughout"
             )
 
