@@ -245,6 +245,8 @@ class Editor:
         else:
             note_all = filled
 
+        note_all = self._sanitize_opening(note_all)
+
         # Then, always build the full Detailed Transcript via chunked polishing to avoid truncation
         logger.info("[editnote] 正在生成完整的‘详细转录记录/Discussion’部分...")
         polished = await self._generate_polished_transcript(transcript_text)
@@ -280,3 +282,32 @@ class Editor:
         for placeholder, value in replacements.items():
             result = result.replace(placeholder, value)
         return result
+
+    def _sanitize_opening(self, text: str) -> str:
+        """Remove prefatory auto-responses the model sometimes prepends."""
+        if not text:
+            return text
+
+        lines = text.splitlines()
+        sanitized = False
+
+        def _should_strip(line: str) -> bool:
+            stripped = line.strip()
+            if not stripped:
+                return True
+            lowered = stripped.lower()
+            if stripped.startswith("好的，") or stripped.startswith("好的。"):
+                return True
+            trigger = "这是根据您提供的会议音频转录生成"
+            if trigger in stripped:
+                return True
+            if trigger in lowered:
+                return True
+            return False
+
+        while lines and _should_strip(lines[0]):
+            lines.pop(0)
+            sanitized = True
+
+        cleaned = "\n".join(lines).lstrip()
+        return cleaned if sanitized else text.lstrip()
