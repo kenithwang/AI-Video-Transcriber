@@ -8,11 +8,6 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-your_gemini_api_key_here}
       # 可选：统一模型（留空使用默认）
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
-      # 可选：阶段模型覆盖（留空回退到 GEMINI_MODEL）
-      - GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-}
-      - GEMINI_OPTIMIZE_MODEL=${GEMINI_OPTIMIZE_MODEL:-}
-      - GEMINI_TRANSLATE_MODEL=${GEMINI_TRANSLATE_MODEL:-}
-      - GEMINI_SUMMARY_MODEL=${GEMINI_SUMMARY_MODEL:-}
       # 可选：关闭自动翻译（1/true/yes）
       - NO_TRANSLATE=${NO_TRANSLATE:-}
       # 服务器配置

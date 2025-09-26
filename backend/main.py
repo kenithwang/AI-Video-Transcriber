@@ -18,6 +18,7 @@ from transcriber import Transcriber
 from summarizer import Summarizer
 from translator import Translator
 from editor import Editor
+from pipeline import process_transcript_input
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -173,6 +174,56 @@ async def process_video(
         
     except Exception as e:
         logger.error(f"处理视频时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+
+
+@app.post("/api/process-transcript")
+async def process_transcript(
+    transcript: str = Form(...),
+    summary_language: str = Form(default="zh"),
+    video_title: Optional[str] = Form(default=None),
+    source_language: Optional[str] = Form(default=None),
+    enable_translation: bool = Form(default=True),
+    generate_summary: bool = Form(default=True),
+    edit_mode: Optional[str] = Form(default=None),
+):
+    """直接处理已有的转录文本，生成摘要/翻译等结果。"""
+
+    if not transcript or not transcript.strip():
+        raise HTTPException(status_code=400, detail="转录文本不能为空")
+
+    try:
+        task_id = str(uuid.uuid4())
+
+        tasks[task_id] = {
+            "status": "processing",
+            "progress": 5,
+            "message": "准备处理转录...",
+            "script": None,
+            "summary": None,
+            "translation": None,
+            "error": None,
+            "video_title": video_title,
+            "summary_language": summary_language,
+        }
+        save_tasks(tasks)
+
+        task = asyncio.create_task(process_transcript_task(
+            task_id=task_id,
+            transcript=transcript,
+            summary_language=summary_language,
+            video_title=video_title,
+            source_language=source_language,
+            enable_translation=enable_translation,
+            generate_summary=generate_summary,
+            edit_mode=edit_mode,
+        ))
+        active_tasks[task_id] = task
+
+        return {"task_id": task_id, "message": "任务已创建，正在处理中..."}
+
+    except Exception as e:
+        logger.error(f"处理转录时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
 async def process_video_task(task_id: str, url: str, summary_language: str, edit_mode: Optional[str]):
@@ -377,6 +428,113 @@ async def process_video_task(task_id: str, url: str, summary_language: str, edit
         })
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
+
+
+async def process_transcript_task(
+    task_id: str,
+    transcript: str,
+    summary_language: str,
+    video_title: Optional[str],
+    source_language: Optional[str],
+    enable_translation: bool,
+    generate_summary: bool,
+    edit_mode: Optional[str],
+):
+    """处理 transcript-only 任务。"""
+
+    try:
+        tasks[task_id].update({
+            "status": "processing",
+            "progress": 15,
+            "message": "正在处理转录..."
+        })
+        save_tasks(tasks)
+        await broadcast_task_update(task_id, tasks[task_id])
+
+        async def on_update(payload: dict):
+            tasks[task_id].update({k: v for k, v in payload.items() if k not in ("warnings",)})
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
+        result = await process_transcript_input(
+            transcript=transcript,
+            summary_language=summary_language,
+            temp_dir=TEMP_DIR,
+            on_update=on_update,
+            video_title=video_title,
+            source_language=source_language,
+            skip_translate=(not enable_translation) or NO_TRANSLATE,
+            skip_summary=not generate_summary,
+            edit_mode=edit_mode,
+        )
+
+        transcript_filename = result.get("transcript_file")
+        summary_filename = result.get("summary_file")
+        translation_filename = result.get("translation_file")
+        editnote_filename = result.get("editnote_file")
+
+        script_path = TEMP_DIR / transcript_filename if transcript_filename else None
+        summary_path = TEMP_DIR / summary_filename if summary_filename else None
+        translation_path = TEMP_DIR / translation_filename if translation_filename else None
+        editnote_path = TEMP_DIR / editnote_filename if editnote_filename else None
+
+        script_content = transcript
+        if script_path and script_path.exists():
+            script_content = script_path.read_text(encoding="utf-8")
+
+        summary_content = None
+        if summary_path and summary_path.exists():
+            summary_content = summary_path.read_text(encoding="utf-8")
+
+        translation_content = None
+        if translation_path and translation_path.exists():
+            translation_content = translation_path.read_text(encoding="utf-8")
+
+        edit_note_content = None
+        if editnote_path and editnote_path.exists():
+            edit_note_content = editnote_path.read_text(encoding="utf-8")
+
+        warnings = result.get("warnings") or []
+
+        tasks[task_id].update({
+            "status": "completed",
+            "progress": 100,
+            "message": "处理完成！" if not warnings else "处理完成（部分步骤失败）",
+            "video_title": result.get("video_title") or video_title,
+            "script": script_content,
+            "script_path": str(script_path) if script_path else None,
+            "summary": summary_content,
+            "summary_path": str(summary_path) if summary_path else None,
+            "translation": translation_content,
+            "translation_path": str(translation_path) if translation_path else None,
+            "edit_note": edit_note_content,
+            "editnote_path": str(editnote_path) if editnote_path else None,
+            "raw_script_file": result.get("raw_script_file"),
+            "transcript_file": transcript_filename,
+            "summary_file": summary_filename,
+            "translation_file": translation_filename,
+            "editnote_file": editnote_filename,
+            "detected_language": result.get("detected_language"),
+            "summary_language": summary_language,
+            "warnings": warnings,
+        })
+        save_tasks(tasks)
+        await broadcast_task_update(task_id, tasks[task_id])
+
+    except Exception as e:
+        logger.error(f"处理 transcript 任务失败: {e}")
+        tasks[task_id].update({
+            "status": "error",
+            "progress": 100,
+            "message": f"处理失败: {e}",
+            "error": str(e),
+        })
+        save_tasks(tasks)
+        await broadcast_task_update(task_id, tasks[task_id])
+    finally:
+        if task_id in active_tasks:
+            del active_tasks[task_id]
+
 
 @app.get("/api/task-status/{task_id}")
 async def get_task_status(task_id: str):

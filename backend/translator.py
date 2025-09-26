@@ -295,7 +295,7 @@ class Translator:
         if self._model_cache:
             return self._model_cache
 
-        base = os.getenv("GEMINI_TRANSLATE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
+        base = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
         model_name = base.split("/", 1)[-1] if base.startswith("models/") else base
         try:
             model = genai.GenerativeModel(model_name)

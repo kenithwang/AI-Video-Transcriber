@@ -54,9 +54,7 @@ class ObsidianTranscriber:
         if not api_key:
             raise RuntimeError('未设置 GEMINI_API_KEY')
         genai.configure(api_key=api_key)
-        self.model_name = (os.getenv('GEMINI_TRANSCRIBE_MODEL')
-                           or os.getenv('GEMINI_MODEL')
-                           or 'gemini-2.5-pro')
+        self.model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
         # google-generativeai 期待短名称
         if self.model_name.startswith('models/'):
             self.model_name = self.model_name.split('/', 1)[-1]

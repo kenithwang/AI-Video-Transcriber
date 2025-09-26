@@ -61,11 +61,8 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
                       no_translate: bool = False,
                       no_summary: bool = True,
                       keep_audio: bool = False,
-                      summary_model: str | None = None,
-                      optimize_model: str | None = None,
-                      translate_model: str | None = None,
+                      model: str | None = None,
                       edit_mode: str | None = None,
-                      edit_model: str | None = None,
                       ):
     from backend.pipeline import process_video
 
@@ -76,14 +73,8 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
 
     # Allow CLI flags to override env-driven model selection
     import os as _os
-    if summary_model:
-        _os.environ["GEMINI_SUMMARY_MODEL"] = summary_model
-    if optimize_model:
-        _os.environ["GEMINI_OPTIMIZE_MODEL"] = optimize_model
-    if translate_model:
-        _os.environ["GEMINI_TRANSLATE_MODEL"] = translate_model
-    if edit_model:
-        _os.environ["GEMINI_EDIT_MODEL"] = edit_model
+    if model:
+        _os.environ["GEMINI_MODEL"] = model
 
     res = await process_video(
         url=url,
@@ -113,6 +104,53 @@ async def run_pipeline(url: str, lang: str, outdir: Path, *,
             print(f" - {item}")
 
 
+async def run_transcript_pipeline(transcript_text: str, lang: str, outdir: Path, *,
+                                  title: str | None = None,
+                                  source_lang: str | None = None,
+                                  no_translate: bool = False,
+                                  no_summary: bool = False,
+                                  edit_mode: str | None = None,
+                                  model: str | None = None,
+                                  ):
+    from backend.pipeline import process_transcript_input
+
+    async def on_update(evt: dict):
+        msg = evt.get("message", "")
+        prog = evt.get("progress", 0)
+        print(f"[ {prog:>3}% ] {msg}")
+
+    import os as _os
+    if model:
+        _os.environ["GEMINI_MODEL"] = model
+
+    res = await process_transcript_input(
+        transcript=transcript_text,
+        summary_language=lang,
+        temp_dir=outdir,
+        on_update=on_update,
+        video_title=title,
+        source_language=source_lang,
+        skip_translate=no_translate,
+        skip_summary=no_summary,
+        edit_mode=edit_mode,
+    )
+
+    print("\n=== 处理完成 ===")
+    print(f"标题: {res.get('video_title')}")
+    print(f"检测语言: {res.get('detected_language')}")
+    print("输出文件：")
+    for key in ["raw_script_file", "transcript_file", "summary_file", "translation_file", "editnote_file"]:
+        val = res.get(key)
+        if val:
+            print(f" - {key}: {outdir / val}")
+
+    warnings = res.get('warnings') or []
+    if warnings:
+        print("\n警告：")
+        for item in warnings:
+            print(f" - {item}")
+
+
 def main():
     # 先尝试加载 .env
     _load_dotenv_if_present()
@@ -123,25 +161,81 @@ def main():
     parser.add_argument("--url", help="视频链接（如 YouTube/Bilibili）")
     parser.add_argument("--lang", default="zh", help="摘要/翻译目标语言，默认 zh")
     parser.add_argument("--outdir", default="temp", help="输出目录（默认 temp）")
-    parser.add_argument("--stt-model", help="转写模型（覆盖 GEMINI_TRANSCRIBE_MODEL/GEMINI_MODEL）")
     # Step toggles
     parser.add_argument("--no-optimize", action="store_true", help="跳过AI优化（直接使用原始转录）")
     parser.add_argument("--no-translate", action="store_true", help="跳过翻译（即使语言不一致也不翻译）")
-    parser.add_argument("--with-summary", dest="no_summary", action="store_false", help="生成摘要（默认不生成）")
-    parser.set_defaults(no_summary=True)
+    parser.add_argument("--with-summary", dest="summary_pref", action="store_const", const="with", help="生成摘要")
+    parser.add_argument("--no-summary", dest="summary_pref", action="store_const", const="without", help="跳过摘要")
     parser.add_argument("--keep-audio", action="store_true", help="保留下载的音频文件（默认处理完成后删除）")
+    parser.add_argument("--transcript-file", help="使用本地转录文件（UTF-8 文本）生成输出")
+    parser.add_argument("--transcript", help="直接提供转录文本内容（注意使用引号包裹）")
+    parser.add_argument("--title", help="指定转录对应的标题（transcript 模式可选）")
+    parser.add_argument("--source-lang", help="指定转录原语言代码（例如 en、zh）")
+    parser.add_argument("--model", help="统一覆盖 GEMINI_MODEL 的模型名称")
     # Model selection
-    parser.add_argument("--summary-model", help="摘要/优化默认模型（默认 gemini-2.5-pro）")
-    parser.add_argument("--optimize-model", help="优化模型（默认同摘要模型或 GEMINI_OPTIMIZE_MODEL）")
-    parser.add_argument("--translate-model", help="翻译模型（默认 gemini-2.5-pro）")
     # Edit Note
     parser.add_argument("--edit-mode", choices=[
         "product_annoucement", "market_view", "client_call", "project_kickoff", "internal_meeting"
     ], help="按所选模板生成编辑笔记（不提供则跳过）")
-    parser.add_argument("--edit-model", help="Edit Note 模型（默认 GEMINI_EDIT_MODEL 或回退）")
     args = parser.parse_args()
 
-    if not ensure_ffmpeg():
+    if not hasattr(args, "summary_pref"):
+        args.summary_pref = None
+
+    transcript_text: str | None = None
+    if args.transcript_file:
+        try:
+            transcript_text = Path(args.transcript_file).read_text(encoding="utf-8")
+        except Exception as exc:
+            print(f"[!] 无法读取转录文件: {exc}", file=sys.stderr)
+            sys.exit(2)
+
+    if args.transcript:
+        if transcript_text is not None:
+            print("[!] 不能同时使用 --transcript-file 和 --transcript，请只保留其中一个", file=sys.stderr)
+            sys.exit(2)
+        transcript_text = args.transcript
+
+    use_transcript_mode = transcript_text is not None
+
+    if not args.url and transcript_text is None:
+        try:
+            choice = input("是否直接处理已有转录文本? (y/N): ").strip().lower()
+        except KeyboardInterrupt:
+            print()
+            sys.exit(1)
+
+        if choice in ("y", "yes"):
+            path = None
+            try:
+                path = input("请输入转录文件路径（留空则直接粘贴文本）: ").strip()
+            except KeyboardInterrupt:
+                print()
+                sys.exit(1)
+
+            if path:
+                try:
+                    transcript_text = Path(path).read_text(encoding="utf-8")
+                except Exception as exc:
+                    print(f"[!] 无法读取转录文件: {exc}", file=sys.stderr)
+                    sys.exit(2)
+            else:
+                print("请粘贴完整的转录内容，结束后按 Ctrl-D (macOS/Linux) 或 Ctrl-Z 然后回车 (Windows):")
+                try:
+                    transcript_text = sys.stdin.read()
+                except KeyboardInterrupt:
+                    print()
+                    sys.exit(1)
+
+            use_transcript_mode = True
+        else:
+            use_transcript_mode = False
+
+    if use_transcript_mode and args.url:
+        print("[i] 已检测到 transcript 模式，忽略 --url 参数", file=sys.stderr)
+        args.url = None
+
+    if not use_transcript_mode and not ensure_ffmpeg():
         sys.exit(1)
 
     print_env_warnings()
@@ -150,15 +244,20 @@ def main():
         print(notice)
 
     url = args.url
-    if not url:
-        try:
-            url = input("请输入视频链接(URL): ").strip()
-        except KeyboardInterrupt:
-            print()
-            sys.exit(1)
-    if not url:
-        print("[!] 未提供视频链接", file=sys.stderr)
-        sys.exit(2)
+    if not use_transcript_mode:
+        if not url:
+            try:
+                url = input("请输入视频链接(URL): ").strip()
+            except KeyboardInterrupt:
+                print()
+                sys.exit(1)
+        if not url:
+            print("[!] 未提供视频链接", file=sys.stderr)
+            sys.exit(2)
+    else:
+        if not transcript_text:
+            print("[!] 未提供转录文本", file=sys.stderr)
+            sys.exit(2)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -171,7 +270,6 @@ def main():
             print()
             sys.exit(1)
         if yn in ("y", "yes"):
-            # 让用户选择模式
             modes = [
                 "product_annoucement",
                 "market_view",
@@ -198,22 +296,40 @@ def main():
                 print("[i] 输入无效，跳过 Edit Note")
 
     try:
-        if args.stt_model:
-            os.environ["GEMINI_TRANSCRIBE_MODEL"] = args.stt_model
-        asyncio.run(run_pipeline(
-            url=url,
-            lang=args.lang,
-            outdir=outdir,
-            no_optimize=args.no_optimize,
-            no_translate=args.no_translate,
-            no_summary=args.no_summary,
-            keep_audio=args.keep_audio,
-            summary_model=args.summary_model,
-            optimize_model=args.optimize_model,
-            translate_model=args.translate_model,
-            edit_mode=args.edit_mode,
-            edit_model=args.edit_model,
-        ))
+        if args.model:
+            os.environ["GEMINI_MODEL"] = args.model
+
+        if args.summary_pref == "with":
+            skip_summary = False
+        elif args.summary_pref == "without":
+            skip_summary = True
+        else:
+            skip_summary = False if use_transcript_mode else True
+
+        if use_transcript_mode:
+            asyncio.run(run_transcript_pipeline(
+                transcript_text=transcript_text or "",
+                lang=args.lang,
+                outdir=outdir,
+                title=args.title,
+                source_lang=args.source_lang,
+                no_translate=args.no_translate,
+                no_summary=skip_summary,
+                edit_mode=args.edit_mode,
+                model=args.model,
+            ))
+        else:
+            asyncio.run(run_pipeline(
+                url=url,
+                lang=args.lang,
+                outdir=outdir,
+                no_optimize=args.no_optimize,
+                no_translate=args.no_translate,
+                no_summary=skip_summary,
+                keep_audio=args.keep_audio,
+                edit_mode=args.edit_mode,
+                model=args.model,
+            ))
     except KeyboardInterrupt:
         print("\n已取消")
         sys.exit(130)

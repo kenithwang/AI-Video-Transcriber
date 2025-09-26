@@ -22,7 +22,7 @@ class CloudTranscriber:
         genai.configure(api_key=api_key)
 
         # e.g., gemini-2.5-pro (google-generativeai expects plain names, not 'models/<name>')
-        raw = model or os.getenv("GEMINI_TRANSCRIBE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
+        raw = model or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
         self.model = raw.split("/", 1)[-1] if raw.startswith("models/") else raw
         logger.info(f"Gemini STT model: {self.model}")
 

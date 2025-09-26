@@ -233,3 +233,127 @@ async def process_video(
         "audio_deleted": audio_deleted,
         "warnings": warnings,
     }
+
+
+async def process_transcript_input(
+    transcript: str,
+    summary_language: str,
+    temp_dir: Path,
+    *,
+    on_update: Optional[Callable[[dict], Awaitable[None]]] = None,
+    video_title: Optional[str] = None,
+    source_language: Optional[str] = None,
+    skip_translate: bool = False,
+    skip_summary: bool = False,
+    edit_mode: Optional[str] = None,
+) -> dict:
+    """处理现有转录文本，生成摘要/翻译等输出。"""
+
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    def emit(update: dict):
+        if on_update:
+            return on_update(update)
+        return asyncio.sleep(0)
+
+    async def _write_file(path: Path, content: str) -> None:
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+
+    transcript = transcript or ""
+    if not transcript.strip():
+        raise ValueError("transcript content is empty")
+
+    summarizer = Summarizer()
+    translator = Translator()
+    editor = Editor()
+
+    short_id = uuid.uuid4().hex[:6]
+    safe_title = _sanitize_title_for_filename(video_title or "manual_transcript")
+
+    status = {
+        "status": "processing",
+        "progress": 5,
+        "message": "preparing transcript",
+        "video_title": video_title or safe_title,
+    }
+    await emit(status)
+
+    detected_language = (source_language or "").strip().lower() if source_language else None
+    if not detected_language:
+        detected_language = summarizer._detect_transcript_language(transcript)  # type: ignore[attr-defined]
+
+    status.update({"progress": 15, "message": "transcript ready"})
+    await emit(status)
+
+    # 写入原始转录文件
+    raw_md_filename = f"raw_{safe_title}_{short_id}.md"
+    raw_md_path = temp_dir / raw_md_filename
+    await _write_file(raw_md_path, transcript)
+
+    script_with_title = transcript if transcript.startswith("# ") else f"# {video_title or safe_title}\n\n{transcript}\n"
+
+    translation_filename = None
+    summary_filename = None
+    editnote_filename = None
+    warnings: list[str] = []
+
+    # 生成翻译（可选）
+    translation_content = None
+    if (not skip_translate) and detected_language and translator.should_translate(detected_language, summary_language):
+        await emit({**status, "progress": 35, "message": "generating translation..."})
+        try:
+            translation_content = await translator.translate_text(transcript, summary_language, detected_language)
+            translation_with_title = f"# {video_title or safe_title}\n\n{translation_content}\n"
+            translation_filename = f"translation_{safe_title}_{short_id}.md"
+            await _write_file(temp_dir / translation_filename, translation_with_title)
+        except Exception as exc:  # pragma: no cover - network errors
+            msg = f"translation failed: {exc}"
+            logger.error(msg)
+            warnings.append(msg)
+
+    # 生成摘要（默认开启）
+    summary_content = None
+    if not skip_summary:
+        await emit({**status, "progress": 55, "message": "generating summary..."})
+        try:
+            summary_content = await summarizer.summarize(transcript, summary_language, video_title or safe_title)
+            summary_filename = f"summary_{safe_title}_{short_id}.md"
+            await _write_file(temp_dir / summary_filename, summary_content)
+        except Exception as exc:
+            msg = f"summary failed: {exc}"
+            logger.error(msg)
+            warnings.append(msg)
+
+    # 写出整理后的转录
+    transcript_filename = f"transcript_{safe_title}_{short_id}.md"
+    transcript_path = temp_dir / transcript_filename
+    await _write_file(transcript_path, script_with_title)
+
+    # 可选编辑提示
+    if edit_mode:
+        await emit({**status, "progress": 70, "message": f"generating edit note: {edit_mode}..."})
+        try:
+            edit_note = await editor.generate(edit_mode, transcript)
+            editnote_filename = f"editnote_{edit_mode}_{safe_title}_{short_id}.md"
+            await _write_file(temp_dir / editnote_filename, edit_note)
+        except Exception as exc:
+            msg = f"edit note failed: {exc}"
+            logger.error(msg)
+            warnings.append(msg)
+
+    final_status = {**status, "progress": 100, "status": "completed"}
+    final_status["message"] = "completed (with warnings)" if warnings else "completed"
+    await emit(final_status)
+
+    return {
+        "status": "completed",
+        "video_title": video_title or safe_title,
+        "detected_language": detected_language,
+        "raw_script_file": raw_md_filename,
+        "transcript_file": transcript_filename,
+        "summary_file": summary_filename,
+        "translation_file": translation_filename,
+        "editnote_file": editnote_filename,
+        "short_id": short_id,
+        "warnings": warnings,
+    }

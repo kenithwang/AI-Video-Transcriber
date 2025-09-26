@@ -22,10 +22,12 @@ An open-source AI video transcription (optional translation) tool that works wit
 
 ## 🆕 Latest improvements
 
-- Faster-Whisper gains multiple environment variables so you can customize device, precision, and beam size (default settings favor speed).
-- Gemini chunk transcription reuses a model pool and calls ffmpeg only once, reducing process spin-up and avoiding missing segments.
-- Translation, summary, and edit-note tasks now run in parallel; file writes occur in background threads for better overall throughput.
-- Bilibili downloads are more reliable with automatic Referer/User-Agent headers, resumable transfers, and optional `BILIBILI_COOKIE_FILE` support.
+- Summarization and paragraph formatting are fully migrated to Gemini with hierarchical chunk integration, fixing truncated output on long transcripts.
+- Chunk summaries now run in parallel (default concurrency 3) to shorten turnaround; tune via `GEMINI_SUMMARY_CONCURRENCY`.
+- Gemini calls auto-retry with a larger `max_output_tokens` budget when the API stops early, preventing empty chunk summaries.
+- CLI now supports transcript-only mode via `--transcript` / `--transcript-file`, reusing the same translation, summary, and edit-note pipeline without downloading video.
+- Backend exposes `/api/process-transcript`, letting the web workflow accept raw transcripts while streaming task updates over the existing SSE channel.
+- Error fallbacks keep more source context (up to 600 characters) and surface warnings instead of silently shortening results.
 
 ## 🚀 Quick start (CLI)
 
@@ -57,10 +59,26 @@ For additional options (translation toggle, target language, custom prompts, out
 python start.py --help
 ```
 
+### Use an existing transcript
+
+If you already have a transcript file (UTF-8 text/Markdown), you can generate summaries, translations, or edit notes without downloading a video:
+
+```bash
+python cli.py --transcript-file path/to/transcript.md --lang zh --with-summary
+```
+
+- `--transcript` accepts raw text directly (quote the argument).
+- `--title` lets you override the default filename prefix.
+- `--source-lang` forces the detected language when you already know it.
+- In transcript mode, summaries are enabled by default; add `--no-summary` to skip.
+- Pass `--model` if you need to temporarily override `GEMINI_MODEL` for every stage.
+- Starting the CLI with no parameters now prompts whether you want to paste or load an existing transcript, so you can enter the transcript flow without memorizing flags.
+
 ### Optional environment
 
 - `BILIBILI_COOKIE_FILE`: Path to a Netscape-format cookie file passed to yt-dlp for Bilibili downloads.
 - `YDL_USER_AGENT`: Override the default desktop-style User-Agent if you need to mimic a specific browser.
+- `GEMINI_SUMMARY_CONCURRENCY`: Limit concurrent Gemini summary calls (default 3, allowed range 1-6).
 
 ## 🛠️ Development
 

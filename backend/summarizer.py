@@ -1,7 +1,10 @@
 import os
 import logging
-from typing import Optional
+import asyncio
+from typing import Optional, List
 import google.generativeai as genai
+from google.generativeai.types import generation_types as gen_types
+from google.generativeai.types import protos
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +24,11 @@ class Summarizer:
         
         # 模型名（可通过环境变量调整）
         base_model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
-        self.optimize_model = os.getenv("GEMINI_OPTIMIZE_MODEL", os.getenv("GEMINI_SUMMARY_MODEL", base_model))
-        self.summary_model = os.getenv("GEMINI_SUMMARY_MODEL", base_model)
-        # Normalize to plain model name (strip any 'models/' prefix)
-        def _norm(name: str) -> str:
-            return name.split("/", 1)[-1] if name.startswith("models/") else name
-        self.optimize_model = _norm(self.optimize_model)
-        self.summary_model = _norm(self.summary_model)
-        logger.info(f"Gemini optimize model: {self.optimize_model}")
-        logger.info(f"Gemini summary model: {self.summary_model}")
+        self.model_name = base_model.split("/", 1)[-1] if base_model.startswith("models/") else base_model
+        logger.info(f"Gemini model: {self.model_name}")
+
+        # Gemini 模型缓存，避免重复初始化
+        self._model_cache: Optional[genai.GenerativeModel] = None
 
         # 支持的语言映射
         self.language_map = {
@@ -45,6 +44,141 @@ class Summarizer:
             "ko": "한국어",
             "ar": "العربية"
         }
+
+    def _get_model(self) -> genai.GenerativeModel:
+        """复用单一 Gemini 模型实例，避免重复创建。"""
+        if not self._model_cache:
+            self._model_cache = genai.GenerativeModel(self.model_name)
+        return self._model_cache
+
+    def _generate_with_gemini(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float,
+        max_output_tokens: int,
+    ) -> str:
+        """统一的 Gemini 生成封装，抛出异常供上层处理。"""
+        if not self.enabled:
+            raise RuntimeError("Gemini API is not configured")
+
+        model = self._get_model()
+        return self._call_gemini_with_retry(
+            model,
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+
+    def _call_gemini_with_retry(
+        self,
+        model: genai.GenerativeModel,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float,
+        max_output_tokens: int,
+        _attempt: int = 0,
+    ) -> str:
+        """调用 Gemini 并处理 MAX_TOKENS/空响应等边界情况。"""
+
+        response = model.generate_content(
+            [f"System: {system_prompt}", f"User: {user_prompt}"],
+            generation_config=genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            ),
+        )
+
+        candidate = response.candidates[0] if response.candidates else None
+        finish_reason = getattr(candidate, "finish_reason", None)
+
+        text = self._extract_text_from_response(response)
+        if text:
+            if (
+                finish_reason == protos.Candidate.FinishReason.MAX_TOKENS
+                and _attempt < 2
+            ):
+                next_tokens = self._next_token_budget(max_output_tokens)
+                if next_tokens > max_output_tokens:
+                    logger.warning(
+                        "Gemini output truncated at max_output_tokens=%s; retrying with %s",
+                        max_output_tokens,
+                        next_tokens,
+                    )
+                    return self._call_gemini_with_retry(
+                        model,
+                        system_prompt,
+                        user_prompt,
+                        temperature=temperature,
+                        max_output_tokens=next_tokens,
+                        _attempt=_attempt + 1,
+                    )
+            return text
+
+        if finish_reason == protos.Candidate.FinishReason.MAX_TOKENS:
+            next_tokens = self._next_token_budget(max_output_tokens)
+            if next_tokens > max_output_tokens and _attempt < 2:
+                logger.warning(
+                    "Gemini hit max_output_tokens=%s without returning text; retrying with %s",
+                    max_output_tokens,
+                    next_tokens,
+                )
+                return self._call_gemini_with_retry(
+                    model,
+                    system_prompt,
+                    user_prompt,
+                    temperature=temperature,
+                    max_output_tokens=next_tokens,
+                    _attempt=_attempt + 1,
+                )
+
+        if finish_reason == protos.Candidate.FinishReason.SAFETY:
+            safety_ratings = getattr(candidate, "safety_ratings", None)
+            raise RuntimeError(
+                f"Gemini blocked the response due to safety filters: {safety_ratings}"
+            )
+
+        raise RuntimeError(
+            "Gemini returned an empty response"
+            f" (finish_reason={finish_reason}, attempt={_attempt})"
+        )
+
+    def _next_token_budget(self, current_budget: int) -> int:
+        """为 MAX_TOKENS 重试策略计算下一次的 tokens 上限。"""
+        budget_steps = [1500, 2200, 3000, 4000, 5200, 6400]
+        for upper in budget_steps:
+            if current_budget < upper:
+                return upper
+        return budget_steps[-1]
+
+    def _summary_concurrency_limit(self) -> int:
+        """读取摘要阶段的并发上限，默认 3，范围限制在 1-6。"""
+        raw = os.getenv("GEMINI_SUMMARY_CONCURRENCY", "3")
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 3
+        return max(1, min(value, 6))
+
+    @staticmethod
+    def _extract_text_from_response(response: gen_types.GenerateContentResponse) -> str:
+        """从 Gemini 响应中提取文本，兼容多 candidates/parts。"""
+        if not getattr(response, "candidates", None):
+            return ""
+        texts: List[str] = []
+        for candidate in response.candidates:
+            content = getattr(candidate, "content", None)
+            if not content:
+                continue
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                text_part = getattr(part, "text", None)
+                if text_part:
+                    texts.append(text_part)
+        return "".join(texts).strip()
     
     async def optimize_transcript(self, raw_transcript: str) -> str:
         """
@@ -166,12 +300,12 @@ class Summarizer:
 
 请特别注意修复因时间戳分割导致的句子不完整问题，并进行合理的段落划分！"""
 
-        model = genai.GenerativeModel(self.optimize_model)
-        response = model.generate_content(
-            [f"System: {system_prompt}", f"User: {user_prompt}"],
-            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4000),
+        return self._generate_with_gemini(
+            system_prompt,
+            user_prompt,
+            temperature=0.1,
+            max_output_tokens=4000,
         )
-        return response.text or ""
 
     async def _optimize_with_chunks(self, raw_transcript: str, max_tokens: int) -> str:
         """
@@ -209,14 +343,14 @@ class Summarizer:
 输出清理后的文本，保持原文结构。"""
 
             try:
-                model = genai.GenerativeModel(self.optimize_model)
-                response = model.generate_content(
-                    [f"System: {system_prompt}", f"User: {user_prompt}"],
-                    generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=1200),
+                optimized_chunk = self._generate_with_gemini(
+                    system_prompt,
+                    user_prompt,
+                    temperature=0.1,
+                    max_output_tokens=1200,
                 )
-                optimized_chunk = response.text or ""
                 optimized_chunks.append(optimized_chunk)
-                
+
             except Exception as e:
                 logger.error(f"优化第 {i+1} 块失败: {e}")
                 # 失败时使用基本清理
@@ -292,12 +426,12 @@ class Summarizer:
             )
 
         try:
-            model = genai.GenerativeModel(self.optimize_model)
-            response = model.generate_content(
-                [f"System: {system_prompt}", f"User: {prompt}"],
-                generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4000),
+            optimized_text = self._generate_with_gemini(
+                system_prompt,
+                prompt,
+                temperature=0.1,
+                max_output_tokens=4000,
             )
-            optimized_text = response.text or ""
             # 移除诸如 "# Transcript" / "## Transcript" 等标题
             optimized_text = self._remove_transcript_heading(optimized_text)
             enforced = self._enforce_paragraph_max_chars(optimized_text.strip(), max_chars=400)
@@ -771,17 +905,12 @@ class Summarizer:
 
 重新分段后的文本："""
 
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_tokens=4000,  # 对齐JS：段落整理阶段最大tokens≈4000
-                temperature=0.05  # 降低温度，提高一致性
+            organized_text = self._generate_with_gemini(
+                system_prompt,
+                user_prompt,
+                temperature=0.05,
+                max_output_tokens=4000,
             )
-            
-            organized_text = response.choices[0].message.content
             
             # 工程验证：检查段落长度
             validated_text = self._validate_paragraph_lengths(organized_text)
@@ -850,17 +979,12 @@ Core requirements:
 
 {text}"""
 
-        response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_tokens=1200,  # 适应4000 tokens总限制
-            temperature=0.05
+        return self._generate_with_gemini(
+            system_prompt,
+            user_prompt,
+            temperature=0.05,
+            max_output_tokens=1200,
         )
-        
-        return response.choices[0].message.content
 
     def _validate_paragraph_lengths(self, text: str) -> str:
         """
@@ -994,20 +1118,8 @@ Summary Requirements:
 1. Extract the main topics and core viewpoints from the text
 2. Maintain clear logical structure, highlighting the core arguments
 3. Include important discussions, viewpoints, and conclusions
-4. Use concise and clear language
-5. Appropriately preserve the speaker's expression style and key opinions
-
-Paragraph Organization Requirements (Core):
-1. **Organize by semantic and logical themes** - Start a new paragraph whenever the topic shifts, discussion focus changes, or when transitioning from one viewpoint to another
-2. **Each paragraph should focus on one main point or theme**
-3. **Paragraphs must be separated by blank lines (double line breaks \\n\\n)**
-4. **Consider the logical flow of content and reasonably divide paragraph boundaries**
-
-Format Requirements:
-1. Use Markdown format with double line breaks between paragraphs
-2. Each paragraph should be a complete logical unit
-3. Write entirely in {language_name}
-4. Aim for substantial content (600-1200 words when appropriate)"""
+4. Use concise and clear language while preserving key speaker styles
+5. Target 5-7 paragraphs with an overall length of roughly 600-900 words"""
 
         user_prompt = f"""Based on the following content, write a comprehensive, well-structured summary in {language_name}:
 
@@ -1017,18 +1129,17 @@ Requirements:
 - Focus on natural paragraphs, avoiding decorative headings
 - Cover all key ideas and arguments, preserving important examples and data
 - Ensure balanced coverage of both early and later content
-- Use restrained but comprehensive language
-- Organize content logically with proper paragraph breaks"""
+- Keep each paragraph within 90-150 words and use double line breaks between paragraphs
+- Maintain a total length near 600-900 words"""
 
         logger.info(f"正在生成{language_name}摘要...")
         
-        # 调用OpenAI API
-        model = genai.GenerativeModel(self.summary_model)
-        response = model.generate_content(
-            [f"System: {system_prompt}", f"User: {user_prompt}"],
-            generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=3500),
+        summary = self._generate_with_gemini(
+            system_prompt,
+            user_prompt,
+            temperature=0.3,
+            max_output_tokens=3500,
         )
-        summary = response.text or ""
 
         return self._format_summary_with_meta(summary, target_language, video_title)
 
@@ -1042,39 +1153,49 @@ Requirements:
         chunks = self._smart_chunk_text(transcript, max_chars_per_chunk=4000)
         logger.info(f"分割为 {len(chunks)} 个块进行摘要")
         
-        chunk_summaries = []
-        
-        # 每块生成局部摘要
-        for i, chunk in enumerate(chunks):
-            logger.info(f"正在摘要第 {i+1}/{len(chunks)} 块...")
-            
-            system_prompt = f"""You are a summarization expert. Please write a high-density summary for this text chunk in {language_name}.
+        chunk_summaries: List[str] = [""] * len(chunks)
+        semaphore = asyncio.Semaphore(self._summary_concurrency_limit())
 
-This is part {i+1} of {len(chunks)} of the complete content (Part {i+1}/{len(chunks)}).
+        async def summarize_chunk(index: int, chunk_text: str) -> tuple[int, str]:
+            total = len(chunks)
+            logger.info(f"正在摘要第 {index + 1}/{total} 块...")
 
-Output preferences: Focus on natural paragraphs, use minimal bullet points if necessary; highlight new information and its relationship to the main narrative; avoid vague repetition and formatted headings; moderate length (suggested 120-220 words)."""
+            system_prompt = f"""You are a summarization expert. Please write a concise, high-density summary for this text chunk in {language_name}.
 
-            user_prompt = f"""[Part {i+1}/{len(chunks)}] Summarize the key points of the following text in {language_name} (natural paragraphs preferred, minimal bullet points, 120-220 words):
+This is part {index + 1} of {total} of the complete content (Part {index + 1}/{total}).
 
-{chunk}
+Output preferences: Focus on natural paragraphs, use minimal bullet points if necessary; highlight new information and its relationship to the main narrative; avoid vague repetition and formatted headings; target length 90-140 words."""
+
+            user_prompt = f"""[Part {index + 1}/{total}] Summarize the key points of the following text in {language_name} (natural paragraphs preferred, minimal bullet points, 90-140 words):
+
+{chunk_text}
 
 Avoid using any subheadings or decorative separators, output content only."""
 
-            try:
-                model = genai.GenerativeModel(self.summary_model)
-                response = model.generate_content(
-                    [f"System: {system_prompt}", f"User: {user_prompt}"],
-                    generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=1000),
-                )
-                chunk_summary = response.text or ""
-                chunk_summaries.append(chunk_summary)
-                
-            except Exception as e:
-                logger.error(f"摘要第 {i+1} 块失败: {e}")
-                # 失败时生成简单摘要
-                simple_summary = f"第{i+1}部分内容概述：" + chunk[:200] + "..."
-                chunk_summaries.append(simple_summary)
-        
+            async with semaphore:
+                try:
+                    chunk_summary = await asyncio.to_thread(
+                        self._generate_with_gemini,
+                        system_prompt,
+                        user_prompt,
+                        temperature=0.3,
+                        max_output_tokens=1000,
+                    )
+                    return index, chunk_summary
+                except Exception as err:
+                    logger.error(f"摘要第 {index + 1} 块失败: {err}")
+                    excerpt = chunk_text[:600]
+                    if len(chunk_text) > 600:
+                        excerpt += "..."
+                    simple_summary = (
+                        f"第{index + 1}部分摘要生成失败，以下为原文节选：\n{excerpt}"
+                    )
+                    return index, simple_summary
+
+        tasks = [asyncio.create_task(summarize_chunk(i, chunk)) for i, chunk in enumerate(chunks)]
+        for index, result in await asyncio.gather(*tasks):
+            chunk_summaries[index] = result
+
         # 合并所有局部摘要（带编号），如分块较多则分层整合（不引入小标题）
         combined_summaries = "\n\n".join([f"[Part {idx+1}]\n" + s for idx, s in enumerate(chunk_summaries)])
 
@@ -1133,11 +1254,9 @@ Avoid using any subheadings or decorative separators, output content only."""
 Integration Requirements:
 1. Remove duplicate content and maintain clear logic
 2. Reorganize content by themes or chronological order
-3. Each paragraph must be separated by double line breaks
+3. Produce 5-7 paragraphs, each 90-140 words, separated by double line breaks
 4. Ensure output is in Markdown format with double line breaks between paragraphs
-5. Use concise and clear language
-6. Form a complete content summary
-7. Cover all parts comprehensively without omission"""
+5. Maintain an overall length close to 600-900 words"""
 
             user_prompt = f"""Please integrate the following segmented summaries into a complete, coherent summary in {language_name}:
 
@@ -1151,22 +1270,67 @@ Requirements:
 - Use concise and clear language
 - Form a complete content summary"""
 
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_tokens=2500,  # 控制输出规模，兼顾上下文安全
-                temperature=0.3
+            return self._generate_with_gemini(
+                system_prompt,
+                user_prompt,
+                temperature=0.3,
+                max_output_tokens=2500,
             )
-            
-            return response.choices[0].message.content
             
         except Exception as e:
             logger.error(f"整合摘要失败: {e}")
             # 失败时直接合并
             return combined_summaries
+
+    async def _integrate_hierarchical_summaries(self, chunk_summaries: List[str], target_language: str) -> str:
+        """分层整合大量分块摘要，降低单次调用的上下文压力。"""
+        language_name = self.language_map.get(target_language, "中文（简体）")
+        group_size = 5
+        grouped_results: List[str] = []
+
+        for group_index in range(0, len(chunk_summaries), group_size):
+            group = chunk_summaries[group_index:group_index + group_size]
+            part_start = group_index + 1
+            group_payload = "\n\n".join(
+                [f"[Part {part_start + idx}]\n{summary}" for idx, summary in enumerate(group)]
+            )
+
+            system_prompt = (
+                f"You are an expert summarizer. Merge adjacent part summaries into one cohesive text in {language_name}. "
+                "Preserve the logical order and key nuances while eliminating redundancy. Aim for compact paragraphs (90-140 words each)."
+            )
+            user_prompt = (
+                f"Combine the following part summaries into a single, coherent summary in {language_name}:\n\n"
+                f"{group_payload}\n\n"
+                "Requirements:\n"
+                "- Maintain chronological or thematic flow\n"
+                "- Keep important details and transitions\n"
+                "- Output 2-3 concise paragraphs separated by blank lines\n"
+                "- Use the requested language throughout"
+            )
+
+            try:
+                merged_group = self._generate_with_gemini(
+                    system_prompt,
+                    user_prompt,
+                    temperature=0.25,
+                    max_output_tokens=1600,
+                )
+                grouped_results.append(merged_group)
+            except Exception as exc:
+                logger.error(
+                    "分层整合子摘要失败（第%s-%s部分）: %s",
+                    part_start,
+                    part_start + len(group) - 1,
+                    exc,
+                )
+                grouped_results.append(group_payload)
+
+        combined_groups = "\n\n".join(
+            [f"[Group {idx + 1}]\n{summary}" for idx, summary in enumerate(grouped_results)]
+        )
+
+        return await self._integrate_chunk_summaries(combined_groups, target_language)
 
     def _format_summary_with_meta(self, summary: str, target_language: str, video_title: str = None) -> str:
         """
@@ -1183,18 +1347,18 @@ Requirements:
         return prefix + summary
 
         try:
-            model = genai.GenerativeModel(self.summary_model)
-            resp = model.generate_content(
-                [f"System: {system_prompt}", f"User: {user_prompt}"],
-                generation_config=genai.types.GenerationConfig(temperature=0.2, max_output_tokens=1200),
+            return self._generate_with_gemini(
+                system_prompt,
+                user_prompt,
+                temperature=0.2,
+                max_output_tokens=1200,
             )
-            return resp.text or text
         except Exception:
             return text
     
     def _generate_fallback_summary(self, transcript: str, target_language: str, video_title: str = None) -> str:
         """
-        生成备用摘要（当OpenAI API不可用时）
+        生成备用摘要（当Gemini API不可用时）
         
         Args:
             transcript: 转录文本
@@ -1407,7 +1571,7 @@ Requirements:
         labels = {
             "en": {
                 "notice": "Notice",
-                "api_unavailable": "OpenAI API is unavailable, this is a simplified summary",
+                "api_unavailable": "Gemini API is unavailable, this is a simplified summary",
                 "overview_title": "Transcript Overview",
                 "content_length": "Content Length",
                 "about": "About",
@@ -1421,13 +1585,13 @@ Requirements:
                 "suggestion_2": "Focus on important paragraphs marked with timestamps",
                 "suggestion_3": "Manually extract key points and takeaways",
                 "recommendations": "Recommendations",
-                "recommendation_1": "Configure OpenAI API key for better summary functionality",
+                "recommendation_1": "Configure Gemini API key for better summary functionality",
                 "recommendation_2": "Or use other AI services for text summarization",
                 "fallback_disclaimer": "This is an automatically generated fallback summary"
             },
             "zh": {
                 "notice": "注意",
-                "api_unavailable": "由于OpenAI API不可用，这是一个简化的摘要",
+                "api_unavailable": "由于Gemini API不可用，这是一个简化的摘要",
                 "overview_title": "转录概览",
                 "content_length": "内容长度",
                 "about": "约",
@@ -1441,7 +1605,7 @@ Requirements:
                 "suggestion_2": "关注时间戳标记的重要段落",
                 "suggestion_3": "手动提取关键观点和要点",
                 "recommendations": "建议",
-                "recommendation_1": "配置OpenAI API密钥以获得更好的摘要功能",
+                "recommendation_1": "配置Gemini API密钥以获得更好的摘要功能",
                 "recommendation_2": "或者使用其他AI服务进行文本总结",
                 "fallback_disclaimer": "本摘要为自动生成的备用版本"
             }
@@ -1453,6 +1617,6 @@ Requirements:
         检查摘要服务是否可用
         
         Returns:
-            True if OpenAI API is configured, False otherwise
+            True if Gemini API is configured, False otherwise
         """
-        return self.client is not None
+        return self.enabled

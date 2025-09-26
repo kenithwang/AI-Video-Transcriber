@@ -5,6 +5,7 @@ import re
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from datetime import datetime
 
 import google.generativeai as genai
 
@@ -24,7 +25,7 @@ class Editor:
             logger.warning("未设置 GEMINI_API_KEY，Edit Note 将无法通过模型生成（将返回占位模板文本）")
 
         # Model selection with fallback
-        base = os.getenv("GEMINI_EDIT_MODEL") or os.getenv("GEMINI_SUMMARY_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        base = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
         self.model_name = base.split("/", 1)[-1] if base.startswith("models/") else base
 
         # Project root and prompts path
@@ -221,6 +222,7 @@ class Editor:
             return ""
 
         filled = block.replace("{transcript_placeholder}", transcript_text or "")
+        filled = self._fill_runtime_placeholders(filled)
 
         # First, try to generate the full note (summary, key points, etc.)
         note_all = ""
@@ -260,3 +262,21 @@ class Editor:
             # If no heading found, append a standard heading
             hdr = "## 详细转录记录 (Detailed Transcript - Polished & Segmented)\n\n"
             return (note_all.strip() + "\n\n" + hdr + polished).strip()
+
+    def _fill_runtime_placeholders(self, text: str) -> str:
+        """用当前日期时间替换模板中的占位符，避免固定年份。"""
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        datetime_str = now.strftime("%Y-%m-%d %H:%M")
+
+        replacements = {
+            "[日期]": date_str,
+            "[Date]": date_str,
+            "[会议具体日期和时间]": datetime_str,
+            "[具体日期和时间]": datetime_str,
+        }
+
+        result = text
+        for placeholder, value in replacements.items():
+            result = result.replace(placeholder, value)
+        return result
