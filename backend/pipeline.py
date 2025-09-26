@@ -8,7 +8,7 @@ from typing import Awaitable, Callable, Optional, Tuple
 from .video_processor import VideoProcessor
 from .obsidian_transcriber import ObsidianTranscriber
 from .summarizer import Summarizer
-from .translator import Translator
+from .translator import Translator, TranslationError
 from .editor import Editor
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,11 @@ async def process_video(
                 fname = f"translation_{safe_title}_{short_id}.md"
                 await _write_file(temp_dir / fname, translation_with_title)
                 return fname
+            except TranslationError as exc:
+                msg = f"translation failed: {exc}"
+                logger.error(msg)
+                warnings.append(msg)
+                return None
             except Exception as exc:
                 msg = f"translation failed: {exc}"
                 logger.error(msg)
@@ -306,6 +311,10 @@ async def process_transcript_input(
             translation_with_title = f"# {video_title or safe_title}\n\n{translation_content}\n"
             translation_filename = f"translation_{safe_title}_{short_id}.md"
             await _write_file(temp_dir / translation_filename, translation_with_title)
+        except TranslationError as exc:  # pragma: no cover - network errors
+            msg = f"translation failed: {exc}"
+            logger.error(msg)
+            warnings.append(msg)
         except Exception as exc:  # pragma: no cover - network errors
             msg = f"translation failed: {exc}"
             logger.error(msg)

@@ -16,7 +16,7 @@ import re
 from video_processor import VideoProcessor
 from transcriber import Transcriber
 from summarizer import Summarizer
-from translator import Translator
+from translator import Translator, TranslationError
 from editor import Editor
 from pipeline import process_transcript_input
 
@@ -85,6 +85,53 @@ def save_tasks(tasks_data):
     except Exception as e:
         logger.error(f"保存任务状态失败: {e}")
 
+
+def _safe_remove(file_path: Optional[str]):
+    if not file_path:
+        return
+    try:
+        Path(file_path).unlink(missing_ok=True)
+    except Exception as exc:
+        logger.debug(f"删除文件失败 {file_path}: {exc}")
+
+
+def _cleanup_task_artifacts(task_data: dict):
+    for path_key in ("script_path", "translation_path", "editnote_path"):
+        _safe_remove(task_data.get(path_key))
+
+    raw_filename = task_data.get("raw_script_file")
+    if raw_filename:
+        _safe_remove(str(TEMP_DIR / raw_filename))
+
+
+def _mark_stale_tasks():
+    """将未完成的历史任务标记为失败，并清理遗留文件。"""
+    stale_notice = "任务在服务重启时被中断"
+    updated = False
+    for task_id, data in list(tasks.items()):
+        status = (data or {}).get("status")
+        if status in {"completed", "error"}:
+            continue
+
+        logger.info(f"检测到未完成的历史任务 {task_id}，标记为失败")
+        _cleanup_task_artifacts(data)
+
+        warnings = list(data.get("warnings") or [])
+        if stale_notice not in warnings:
+            warnings.append(stale_notice)
+
+        data.update({
+            "status": "error",
+            "message": f"{stale_notice}，已终止",
+            "error": stale_notice,
+            "progress": 100,
+            "warnings": warnings,
+        })
+        updated = True
+
+    if updated:
+        save_tasks(tasks)
+
 async def broadcast_task_update(task_id: str, task_data: dict):
     """向所有连接的SSE客户端广播任务状态更新"""
     logger.info(f"广播任务更新: {task_id}, 状态: {task_data.get('status')}, 连接数: {len(sse_connections.get(task_id, []))}")
@@ -108,6 +155,7 @@ async def broadcast_task_update(task_id: str, task_data: dict):
 
 # 启动时加载任务状态
 tasks = load_tasks()
+_mark_stale_tasks()
 # 存储正在处理的URL，防止重复处理
 processing_urls = set()
 # 存储活跃的任务对象，用于控制和取消
@@ -306,6 +354,7 @@ async def process_video_task(task_id: str, url: str, summary_language: str, edit
         translation_content = None
         translation_filename = None
         translation_path = None
+        warnings: list[str] = []
         
         # 若设置 NO_TRANSLATE/DISABLE_TRANSLATION，则无论语言是否不一致都跳过翻译
         if (not NO_TRANSLATE) and detected_language and translator.should_translate(detected_language, summary_language):
@@ -319,14 +368,25 @@ async def process_video_task(task_id: str, url: str, summary_language: str, edit
             await broadcast_task_update(task_id, tasks[task_id])
             
             # 翻译转录文本
-            translation_content = await translator.translate_text(script, summary_language, detected_language)
-            translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"
-            
-            # 保存翻译到文件
-            translation_filename = f"translation_{safe_title}_{short_id}.md"
-            translation_path = TEMP_DIR / translation_filename
-            async with aiofiles.open(translation_path, "w", encoding="utf-8") as f:
-                await f.write(translation_with_title)
+            try:
+                translation_content = await translator.translate_text(script, summary_language, detected_language)
+                translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"
+
+                # 保存翻译到文件
+                translation_filename = f"translation_{safe_title}_{short_id}.md"
+                translation_path = TEMP_DIR / translation_filename
+                async with aiofiles.open(translation_path, "w", encoding="utf-8") as f:
+                    await f.write(translation_with_title)
+            except TranslationError as exc:
+                warning = f"翻译失败: {exc}"
+                logger.error(warning)
+                warnings.append(warning)
+                tasks[task_id].update({
+                    "message": "翻译失败，继续生成其他结果...",
+                    "warnings": warnings,
+                })
+                save_tasks(tasks)
+                await broadcast_task_update(task_id, tasks[task_id])
         else:
             logger.info(f"不需要翻译: detected_language={detected_language}, summary_language={summary_language}, should_translate={translator.should_translate(detected_language, summary_language) if detected_language else 'N/A'}")
         
@@ -371,14 +431,15 @@ async def process_video_task(task_id: str, url: str, summary_language: str, edit
         task_result = {
             "status": "completed",
             "progress": 100,
-            "message": "处理完成！",
+            "message": "处理完成！" if not warnings else "处理完成（部分步骤失败）",
             "video_title": video_title,
             "script": script_with_title,
             "script_path": str(script_path),
             "short_id": short_id,
             "safe_title": safe_title,
             "detected_language": detected_language,
-            "summary_language": summary_language
+            "summary_language": summary_language,
+            "warnings": warnings,
         }
         
         # 如果有翻译，添加翻译信息
@@ -661,23 +722,12 @@ async def delete_task(task_id: str):
         processing_urls.discard(task_url)
 
     # 清理关联的临时文件
-    def _safe_remove(file_path: Optional[str]):
-        if not file_path:
-            return
-        try:
-            Path(file_path).unlink(missing_ok=True)
-        except Exception as exc:
-            logger.debug(f"删除文件失败 {file_path}: {exc}")
-
     for path_key in ["script_path", "translation_path", "editnote_path"]:
         _safe_remove(task_data.get(path_key))
 
     raw_filename = task_data.get("raw_script_file")
     if raw_filename:
-        try:
-            (TEMP_DIR / raw_filename).unlink(missing_ok=True)
-        except Exception as exc:
-            logger.debug(f"删除原始转录文件失败 {raw_filename}: {exc}")
+        _safe_remove(str(TEMP_DIR / raw_filename))
 
     # 移除SSE连接队列
     if task_id in sse_connections:

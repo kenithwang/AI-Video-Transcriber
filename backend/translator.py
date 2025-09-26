@@ -17,6 +17,12 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
+
+class TranslationError(RuntimeError):
+    """Raised when translation could not be completed."""
+
+    pass
+
 class Translator:
     """文本翻译器，使用 Gemini 进行高质量翻译"""
     
@@ -96,7 +102,7 @@ class Translator:
     def _smart_chunk_text(self, text: str, max_chars_per_chunk: int = 4000) -> list:
         """智能分块文本用于翻译"""
         chunks = []
-        
+
         # 首先按段落分割
         paragraphs = [p for p in text.split('\n\n') if p.strip()]
         current_chunk = ""
@@ -122,25 +128,22 @@ class Translator:
             if len(chunk) <= max_chars_per_chunk:
                 final_chunks.append(chunk)
             else:
-                # 按句子分割
-                sentences = re.split(r'[.!?。！？]\s+', chunk)
+                sentences = self._split_sentences_preserve_delimiters(chunk)
                 current_sub_chunk = ""
-                
+
                 for sentence in sentences:
-                    if len(current_sub_chunk) + len(sentence) + 2 > max_chars_per_chunk and current_sub_chunk:
-                        final_chunks.append(current_sub_chunk.strip())
+                    candidate = f"{current_sub_chunk}{sentence}" if current_sub_chunk else sentence
+                    if len(candidate) > max_chars_per_chunk and current_sub_chunk:
+                        final_chunks.append(current_sub_chunk.rstrip())
                         current_sub_chunk = sentence
                     else:
-                        if current_sub_chunk:
-                            current_sub_chunk += ". " + sentence
-                        else:
-                            current_sub_chunk = sentence
-                
+                        current_sub_chunk = candidate
+
                 if current_sub_chunk.strip():
-                    final_chunks.append(current_sub_chunk.strip())
-        
+                    final_chunks.append(current_sub_chunk.rstrip())
+
         return final_chunks
-    
+
     async def translate_text(self, text: str, target_language: str, source_language: Optional[str] = None) -> str:
         """
         翻译文本到目标语言
@@ -155,33 +158,33 @@ class Translator:
         """
         try:
             if not self.client:
-                logger.warning("OpenAI API不可用，无法翻译")
-                return text
-            
+                raise TranslationError("Gemini API 未初始化，无法执行翻译")
+
             # 检测源语言
             if not source_language:
                 source_language = self._detect_source_language(text)
-            
+
             # 如果源语言和目标语言相同，直接返回
             if source_language == target_language:
                 return text
-            
+
             source_lang_name = self.language_map.get(source_language, source_language)
             target_lang_name = self.language_map.get(target_language, target_language)
-            
+
             logger.info(f"开始翻译：{source_lang_name} -> {target_lang_name}")
-            
+
             # 估算文本长度，决定是否需要分块
             if len(text) > 3000:
                 logger.info(f"文本较长({len(text)} chars)，启用分块翻译")
                 return await self._translate_with_chunks(text, target_lang_name, source_lang_name)
-            else:
-                return await self._translate_single_text(text, target_lang_name, source_lang_name)
-                
+            return await self._translate_single_text(text, target_lang_name, source_lang_name)
+
+        except TranslationError:
+            raise
         except Exception as e:
             logger.error(f"翻译失败: {str(e)}")
-            return text
-    
+            raise TranslationError(str(e)) from e
+
     async def _translate_single_text(self, text: str, target_lang_name: str, source_lang_name: str) -> str:
         """翻译单个文本块"""
         system_prompt = f"""你是专业翻译专家。请将{source_lang_name}文本准确翻译为{target_lang_name}。
@@ -202,8 +205,7 @@ class Translator:
         try:
             model = self._get_model()
             if not model:
-                logger.warning("Gemini translate model 未初始化，返回原文")
-                return text
+                raise TranslationError("Gemini 翻译模型未初始化")
             response = model.generate_content(
                 [f"System: {system_prompt}", f"User: {user_prompt}"],
                 generation_config=genai.types.GenerationConfig(
@@ -211,22 +213,26 @@ class Translator:
                     max_output_tokens=4000,
                 ),
             )
-            return response.text or text
-            
+            if not response.text:
+                raise TranslationError("Gemini 返回空翻译结果")
+            return response.text
+
+        except TranslationError:
+            raise
         except Exception as e:
             logger.error(f"单文本翻译失败: {e}")
-            return text
-    
+            raise TranslationError(str(e)) from e
+
     async def _translate_with_chunks(self, text: str, target_lang_name: str, source_lang_name: str) -> str:
         """分块翻译长文本"""
         chunks = self._smart_chunk_text(text, max_chars_per_chunk=4000)
         logger.info(f"分割为 {len(chunks)} 个块进行翻译")
-        
+
         translated_chunks = []
-        
+
         for i, chunk in enumerate(chunks):
             logger.info(f"正在翻译第 {i+1}/{len(chunks)} 块...")
-            
+
             system_prompt = f"""你是专业翻译专家。请将{source_lang_name}文本准确翻译为{target_lang_name}。
 
 这是完整文档的第{i+1}部分，共{len(chunks)}部分。
@@ -247,9 +253,7 @@ class Translator:
             try:
                 model = self._get_model()
                 if not model:
-                    logger.warning("Gemini translate model 未初始化，返回原文片段")
-                    translated_chunks.append(chunk)
-                    continue
+                    raise TranslationError("Gemini 翻译模型未初始化")
                 response = model.generate_content(
                     [f"System: {system_prompt}", f"User: {user_prompt}"],
                     generation_config=genai.types.GenerationConfig(
@@ -257,14 +261,17 @@ class Translator:
                         max_output_tokens=4000,
                     ),
                 )
-                translated_chunk = response.text or chunk
+                translated_chunk = response.text
+                if not translated_chunk:
+                    raise TranslationError(f"第 {i+1} 块翻译返回为空")
                 translated_chunks.append(translated_chunk)
-                
+
+            except TranslationError:
+                raise
             except Exception as e:
                 logger.error(f"翻译第 {i+1} 块失败: {e}")
-                # 失败时保留原文
-                translated_chunks.append(chunk)
-        
+                raise TranslationError(f"翻译第 {i+1} 块失败: {e}") from e
+
         # 合并翻译结果
         return "\n\n".join(translated_chunks)
 
@@ -307,3 +314,12 @@ class Translator:
         self._model_cache = model
         logger.info(f"Gemini translate model: {model_name}")
         return model
+
+    @staticmethod
+    def _split_sentences_preserve_delimiters(text: str) -> list:
+        """按句子切分并保留标点及原始间隔。"""
+        if not text:
+            return []
+        pattern = re.compile(r'.+?(?:[.!?。！？]+(?:\s+|$)|$)', re.S)
+        sentences = pattern.findall(text)
+        return [segment for segment in sentences if segment.strip()]
