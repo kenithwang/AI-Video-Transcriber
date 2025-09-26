@@ -1,34 +1,20 @@
 <div align="center">
 
-# AI Video Transcriber
+# AI Video Transcriber (CLI)
 
 English | [中文](README_ZH.md)
 
-An open-source AI video transcription (optional translation) tool that works with more than 30 platforms including YouTube, Bilibili, and TikTok.
-
-![Interface](en-video.png)
+Minimal, CLI-first Gemini transcription for long-form video or existing scripts.
 
 </div>
 
 ## ✨ Features
 
-- 🎥 **Multi-platform support**: Works with YouTube, Bilibili, TikTok, and 30+ other sites.
-- 🗣️ **High-quality transcription**: Powered by Gemini (`gemini-2.5-pro`) for accurate speech-to-text.
-- 🌍 **Optional translation**: Automatically translates when the target language differs from the detected language.
-- ⚙️ **Conditional translation**: Only triggers translation when the requested summary language differs from the detected language.
-- 🧰 **CLI-first workflow**: All processing is driven from the command line with clear progress output.
-- 🚀 **Parallel chunk processing**: Silence-aligned segmentation with configurable parallel workers.
-- 📝 **Optional Edit Note**: Generates a structured edit note based on `Prompts.md`, stored under `temp/`.
-
-## 🆕 Latest improvements
-
-- Summarization and paragraph formatting are fully migrated to Gemini with hierarchical chunk integration, fixing truncated output on long transcripts.
-- Chunk summaries now run in parallel (default concurrency 3) to shorten turnaround; tune via `GEMINI_SUMMARY_CONCURRENCY`.
-- Gemini calls auto-retry with a larger `max_output_tokens` budget when the API stops early, preventing empty chunk summaries.
-- CLI now supports transcript-only mode via `--transcript` / `--transcript-file`, reusing the same translation, summary, and edit-note pipeline without downloading video.
-- Processing pipeline is now fully CLI-driven; transcript-only runs reuse the same translation, summary, and edit-note steps without needing a web front end.
-- Translation now raises explicit warnings instead of silently returning the source text when Gemini fails, and long-text chunking preserves original punctuation so tone and intent remain intact.
-- On startup the server marks unfinished tasks as failed and cleans up their temporary files, so the dashboard no longer shows ghost jobs after a restart.
+- 🎥 **Multi-platform support** powered by `yt-dlp` (YouTube, Bilibili, etc.).
+- 🗣️ **Gemini-based transcription** with silence-aligned chunking for robustness.
+- 🧵 **Parallel processing**; tune chunk concurrency via environment variables.
+- 📂 **Clean outputs**: raw transcript + normalized transcript saved under `temp/`.
+- 🛠️ **CLI-only footprint** – no web server, no prompt templates, no extra UI.
 
 ## 🚀 Quick start (CLI)
 
@@ -36,57 +22,55 @@ An open-source AI video transcription (optional translation) tool that works wit
 
 - Python 3.8+
 - FFmpeg
-- Gemini API key (required for cloud transcription/translation)
+- `GEMINI_API_KEY`
 
 ### Installation
 
 ```bash
- git clone https://github.com/yourname/AI-Video-Transcriber.git
- cd AI-Video-Transcriber
- python -m venv .venv
- source .venv/bin/activate
- pip install -r requirements.txt
+git clone https://github.com/yourname/AI-Video-Transcriber.git
+cd AI-Video-Transcriber
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# 可选：./install.sh 自动执行以上步骤
 ```
 
 ### Basic usage
 
 ```bash
-python cli.py --url https://www.youtube.com/watch?v=xxxx --lang zh
+python cli.py --url https://www.youtube.com/watch?v=xxxx
 ```
 
-For additional options (translation toggle, target language, custom prompts, output directory, etc.) please run:
-
-```bash
-python cli.py --help
-```
+- 进度信息会实时输出；默认生成 `temp/raw_*.md` 与 `temp/transcript_*.md`。
+- 通过 `--keep-audio` 可保留下载的音频文件；默认处理完成后删除。
+- 若需要临时切换 Gemini 模型，可添加 `--model models/gemini-2.0-pro-exp` 等。
 
 ### Use an existing transcript
 
-If you already have a transcript file (UTF-8 text/Markdown), you can generate summaries, translations, or edit notes without downloading a video:
-
 ```bash
-python cli.py --transcript-file path/to/transcript.md --lang zh --with-summary
+python cli.py --transcript-file path/to/transcript.md
 ```
 
-- `--transcript` accepts raw text directly (quote the argument).
-- `--title` lets you override the default filename prefix.
-- `--source-lang` forces the detected language when you already know it.
-- In transcript mode, summaries are enabled by default; add `--no-summary` to skip.
-- Pass `--model` if you need to temporarily override `GEMINI_MODEL` for every stage.
-- Starting the CLI with no parameters now prompts whether you want to paste or load an existing transcript, so you can enter the transcript flow without memorizing flags.
+- `--transcript` 接受直接传入的文本（请使用引号包裹）。
+- `--title` 覆盖默认文件名前缀，便于管理多个输出。
+- `--source-lang` 可手动标注原始语言（例如 `--source-lang en`）。
 
 ### Optional environment
 
-- `BILIBILI_COOKIE_FILE`: Path to a Netscape-format cookie file passed to yt-dlp for Bilibili downloads.
-- `YDL_USER_AGENT`: Override the default desktop-style User-Agent if you need to mimic a specific browser.
-- `GEMINI_SUMMARY_CONCURRENCY`: Limit concurrent Gemini summary calls (default 3, allowed range 1-6).
-- Translation failures emit warnings and keep the original text so downstream files never masquerade as successful translations. Check the CLI output or task details for any listed warnings.
+- `BILIBILI_COOKIE_FILE`: Netscape-format cookie file to help yt-dlp access members-only videos.
+- `YDL_USER_AGENT`: Custom UA string if the default desktop UA is blocked.
+- `TRANSCRIBE_CONCURRENCY` / `OBSIDIAN_CONCURRENCY`: Override parallel chunk workers (default自动).
+
+## 📦 Outputs
+
+- `raw_*.md`: 原始 Gemini 输出（含模型信息、语言检测）。
+- `transcript_*.md`: 规范化带标题的转录文本。
+- 可选：若启用 `--keep-audio`，会在 `temp/` 中保留音频文件路径。
 
 ## 🛠️ Development
 
-- Core processing lives under `backend/` (pipeline, downloader, translator, editor).
-- Prompts for the optional edit note are defined in `Prompts.md`.
-- CLI entry point is `cli.py`; logging is configured directly in the CLI and backend modules.
+- 核心处理位于 `backend/`（Gemini 分片转写 + `yt-dlp` 下载封装）。
+- CLI 入口为 `cli.py`，日志直接打印到终端供监控。
 
 ## 📄 License
 
