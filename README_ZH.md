@@ -26,6 +26,8 @@
 - CLI 新增 `--transcript` / `--transcript-file`，可直接处理现成转录，复用翻译、摘要、Edit Note 等完整流程。
 - 后端开放 `/api/process-transcript`，Web 前端同样可以提交纯文本转录并通过原有 SSE 流获取进度与结果。
 - 失败兜底会保留最长 600 字原文并同步告警，避免静默截断或丢失关键信息。
+- 翻译异常会明确抛出并在任务详情中展示 warning，确保不会再生成「看似成功」但内容仍是原文的翻译文件；同样改进了长文本分块，保留原始标点和语气。
+- 服务重启后会自动将未完成的旧任务标记为失败并清理挂起的临时文件，UI 不再出现“卡住”的历史任务。
 
 ## 🚀 快速开始（CLI）
 
@@ -142,17 +144,7 @@ python3 cli.py --transcript-file 转录文件.md --lang zh --with-summary
 
 说明：CLI 会在启动时自动加载当前目录的 `.env` 文件（如存在）。
 
-### 默认行为
-
-- 转写：使用 Gemini `gemini-2.5-pro`（可在 `.env` 通过 `GEMINI_MODEL` 指定）。
-- 翻译：条件触发；仅当检测语言 ≠ `--lang` 且未使用 `--no-translate` 时执行。
-  - Web/服务端可通过环境变量 `NO_TRANSLATE=1` 全局关闭自动翻译。
-- 摘要：Web 版已完全跳过；CLI 可通过 `--with-summary` 手动开启。
-- 输出目录：`temp/`（可用 `--outdir` 修改）。
-- 目标语言：`zh`（可用 `--lang` 修改）。
-- 音频文件：处理完成后默认删除；加 `--keep-audio` 可保留。
-- 环境变量：自动加载 `.env`，无需手动 export。
-- Edit Note：默认不生成；未指定 `--edit-mode` 时 CLI 启动会询问是否生成与选择模式；生成文件写入 `temp/`。
+- 翻译失败会抛出 warning 并保留原文，整体流程继续执行。最后的任务详情（CLI 输出 / Web UI）会列出 warning，便于人工复查。
 
 转写流程：
 - 下载最佳音轨并转为 16kHz 单声道；
@@ -232,6 +224,7 @@ AI-Video-Transcriber/
 - `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` / `WHISPER_BEAM_SIZE` / `WHISPER_TEMPERATURES` / `WHISPER_CPU_WORKERS`：本地 Faster-Whisper 推理参数调节。
 - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`：可选代理。
 - `YT_DLP_PROXY`：仅为 yt-dlp 指定代理。
+- 翻译失败会记录 warning 并保留原文，任务最终状态会列出 warning，避免误以为翻译成功。
 
 ## 🔧 常见问题
 

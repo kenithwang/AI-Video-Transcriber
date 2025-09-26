@@ -27,7 +27,8 @@ An open-source AI video transcription (optional translation) tool that works wit
 - Gemini calls auto-retry with a larger `max_output_tokens` budget when the API stops early, preventing empty chunk summaries.
 - CLI now supports transcript-only mode via `--transcript` / `--transcript-file`, reusing the same translation, summary, and edit-note pipeline without downloading video.
 - Backend exposes `/api/process-transcript`, letting the web workflow accept raw transcripts while streaming task updates over the existing SSE channel.
-- Error fallbacks keep more source context (up to 600 characters) and surface warnings instead of silently shortening results.
+- Translation now raises explicit warnings instead of silently returning the source text when Gemini fails, and long-text chunking preserves original punctuation so tone and intent remain intact.
+- On startup the server marks unfinished tasks as failed and cleans up their temporary files, so the dashboard no longer shows ghost jobs after a restart.
 
 ## 🚀 Quick start (CLI)
 
@@ -79,6 +80,7 @@ python cli.py --transcript-file path/to/transcript.md --lang zh --with-summary
 - `BILIBILI_COOKIE_FILE`: Path to a Netscape-format cookie file passed to yt-dlp for Bilibili downloads.
 - `YDL_USER_AGENT`: Override the default desktop-style User-Agent if you need to mimic a specific browser.
 - `GEMINI_SUMMARY_CONCURRENCY`: Limit concurrent Gemini summary calls (default 3, allowed range 1-6).
+- Translation failures emit warnings and keep the original text so downstream files never masquerade as successful translations. Check the CLI output or task details for any listed warnings.
 
 ## 🛠️ Development
 
