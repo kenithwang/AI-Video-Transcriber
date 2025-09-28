@@ -42,13 +42,14 @@ def preflight_checks() -> list[str]:
     try:
         import yt_dlp  # type: ignore
         from yt_dlp.update import Updater  # type: ignore
+        from yt_dlp.version import __version__ as ytdlp_version  # type: ignore
 
         with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:  # type: ignore[attr-defined]
             update_info = Updater(ydl).query_update()
         if update_info:
             latest = update_info.version or update_info.tag
             notices.append(
-                f"[!] 检测到 yt-dlp 可更新：当前 {yt_dlp.__version__}，最新 {latest}。建议运行 `pip install --upgrade yt-dlp`。"
+                f"[!] 检测到 yt-dlp 可更新：当前 {ytdlp_version}，最新 {latest}。建议运行 `pip install --upgrade yt-dlp`。"
             )
     except Exception as exc:
         logging.debug(f"预检 yt-dlp 更新失败: {exc}")

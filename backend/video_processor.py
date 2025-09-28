@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 import logging
 from pathlib import Path
@@ -7,6 +8,7 @@ from urllib.parse import urlparse
 
 import yt_dlp
 from yt_dlp.update import Updater
+from yt_dlp.version import __version__ as ytdlp_version
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +22,12 @@ class VideoProcessor:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         )
+        format_value = os.getenv(
+            "YDL_FORMAT",
+            "bestaudio/best",
+        )
         self.ydl_opts = {
-            'format': 'bestaudio/best',  # 优先下载最佳音频源
+            'format': format_value,  # 优先下载最佳音频轨，可用 YDL_FORMAT 覆盖
             'outtmpl': '%(title)s.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -39,6 +45,35 @@ class VideoProcessor:
             'retries': 10,
             'fragment_retries': 10,
         }
+        cookie_file = os.getenv("YDL_COOKIEFILE")
+        if cookie_file:
+            cookie_path = Path(cookie_file).expanduser()
+            if cookie_path.exists():
+                self.ydl_opts['cookiefile'] = str(cookie_path)
+            else:
+                logger.warning("YDL_COOKIEFILE 指定的文件不存在: %s", cookie_path)
+        extractor_args_json = os.getenv("YDL_EXTRACTOR_ARGS_JSON")
+        if extractor_args_json:
+            try:
+                extractor_args = json.loads(extractor_args_json)
+                if isinstance(extractor_args, dict):
+                    self.ydl_opts['extractor_args'] = extractor_args
+                else:
+                    logger.warning("YDL_EXTRACTOR_ARGS_JSON 需要是 JSON 对象: %s", extractor_args_json)
+            except json.JSONDecodeError:
+                logger.warning("无法解析 YDL_EXTRACTOR_ARGS_JSON: %s", extractor_args_json)
+        else:
+            default_player_client = os.getenv("YDL_DEFAULT_PLAYER_CLIENT")
+            if default_player_client:
+                clients = [item.strip() for item in default_player_client.split(',') if item.strip()]
+                if clients:
+                    self.ydl_opts['extractor_args'] = {'youtube': {'player_client': clients}}
+        chunk_size = os.getenv("YDL_HTTP_CHUNK_SIZE")
+        if chunk_size:
+            try:
+                self.ydl_opts['http_chunk_size'] = int(chunk_size)
+            except ValueError:
+                logger.warning("YDL_HTTP_CHUNK_SIZE 非法: %s", chunk_size)
         self._update_hint_checked = False
         self._cached_update_hint: Optional[str] = None
 
@@ -265,7 +300,7 @@ class VideoProcessor:
             if update_info:
                 latest = update_info.version or update_info.tag
                 hint = (
-                    f"检测到 yt-dlp 有可用更新（最新: {latest}，当前: {yt_dlp.__version__}）。"
+                    f"检测到 yt-dlp 有可用更新（最新: {latest}，当前: {ytdlp_version}）。"
                     "请运行 `pip install --upgrade yt-dlp` 后重试。"
                 )
             else:

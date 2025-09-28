@@ -65,3 +65,6 @@ temp/
 # Model cache
 models/
 .cache/
+
+# Auth cookies
+*_cookies.txt
