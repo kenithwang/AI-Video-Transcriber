@@ -3,7 +3,7 @@ import json
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import urlparse
 
 import yt_dlp
@@ -127,21 +127,52 @@ class VideoProcessor:
             
             # 直接同步执行，不使用线程池
             # 在FastAPI中，IO密集型操作可以直接await
+            candidate_formats: List[str] = []
+            probe_info = None
             try:
-                info = await self._run_ytdlp(url, ydl_opts)
-            except yt_dlp.utils.DownloadError as exc:
-                if 'Requested format is not available' not in str(exc):
-                    raise
+                probe_info = await asyncio.to_thread(self._probe_video_info, url, ydl_opts)
+            except Exception as probe_exc:
+                logger.debug(f"探测可用格式失败，使用默认格式重试: {probe_exc}")
+            else:
+                candidate_formats = self._build_format_candidates(probe_info, ydl_opts.get('format'))
 
-                logger.warning("指定格式不可用，尝试自动回退格式…")
-                fallback_format = await asyncio.to_thread(self._resolve_fallback_format, url)
-                if not fallback_format:
-                    raise
+            info = None
+            last_exc: Optional[Exception] = None
+            if candidate_formats:
+                for index, format_id in enumerate(candidate_formats):
+                    trial_opts = ydl_opts.copy()
+                    if format_id:
+                        trial_opts['format'] = format_id
+                    else:
+                        trial_opts.pop('format', None)
 
-                logger.info(f"使用回退格式下载: {fallback_format}")
-                retry_opts = ydl_opts.copy()
-                retry_opts['format'] = fallback_format
-                info = await self._run_ytdlp(url, retry_opts)
+                    log_label = format_id or ydl_opts.get('format') or '<auto>'
+                    if index == 0:
+                        logger.info(f"尝试下载格式: {log_label}")
+                    else:
+                        logger.info(f"尝试回退格式: {log_label}")
+
+                    try:
+                        info = await self._run_ytdlp(url, trial_opts)
+                        if index > 0:
+                            logger.info(f"使用回退格式下载成功: {log_label}")
+                        break
+                    except yt_dlp.utils.DownloadError as exc:
+                        last_exc = exc
+                        if not self._should_retry_format(exc):
+                            raise
+                        logger.warning(f"格式 {log_label} 下载失败（{exc}），尝试下一档格式…")
+                        continue
+            else:
+                try:
+                    info = await self._run_ytdlp(url, ydl_opts)
+                except yt_dlp.utils.DownloadError as exc:
+                    last_exc = exc
+
+            if info is None:
+                if last_exc:
+                    raise last_exc
+                raise Exception("未能获取下载信息")
 
             video_title = info.get('title', 'unknown')
             expected_duration = info.get('duration') or 0
@@ -235,50 +266,107 @@ class VideoProcessor:
 
         return await asyncio.to_thread(_extract)
 
-    def _resolve_fallback_format(self, url: str) -> Optional[str]:
-        probe_opts = self.ydl_opts.copy()
+    def _probe_video_info(self, url: str, base_opts: dict) -> dict:
+        probe_opts = base_opts.copy()
+        # 探测阶段无需下载或执行后处理
         probe_opts.pop('format', None)
         probe_opts.pop('postprocessors', None)
         probe_opts.pop('postprocessor_args', None)
+        probe_opts.pop('outtmpl', None)
         probe_opts['noplaylist'] = True
         probe_opts['quiet'] = True
         probe_opts['skip_download'] = True
 
-        try:
-            with yt_dlp.YoutubeDL(probe_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except Exception as exc:  # pragma: no cover - yt-dlp errors bubble up
-            logger.error(f"获取可用格式失败: {exc}")
-            return None
+        with yt_dlp.YoutubeDL(probe_opts) as ydl:
+            return ydl.extract_info(url, download=False)
 
+    def _build_format_candidates(self, info: dict, preferred_format: Optional[str]) -> List[str]:
         formats = info.get('formats') or []
         if not formats:
-            return info.get('format_id') or 'best'
+            return self._expand_format_tokens(preferred_format)
 
-        def _bitrate(fmt: dict) -> float:
-            for key in ('abr', 'tbr', 'vbr'):
-                val = fmt.get(key)
-                if isinstance(val, (int, float)):
-                    return float(val)
-            return 0.0
+        audio_formats = []
+        progressive = []
 
-        audio_only = [
-            f for f in formats
-            if (f.get('vcodec') in (None, 'none')) and f.get('acodec') not in (None, 'none')
-        ]
-        if audio_only:
-            best_audio = max(audio_only, key=_bitrate)
-            return best_audio.get('format_id') or 'bestaudio'
+        for fmt in formats:
+            format_id = fmt.get('format_id')
+            if not format_id:
+                continue
+            if fmt.get('acodec') in (None, 'none'):
+                continue
+            if fmt.get('vcodec') in (None, 'none'):
+                audio_formats.append(fmt)
+            else:
+                progressive.append(fmt)
 
-        progressive = [
-            f for f in formats
-            if f.get('acodec') not in (None, 'none') and f.get('vcodec') not in (None, 'none')
-        ]
-        if progressive:
-            best_progressive = max(progressive, key=_bitrate)
-            return best_progressive.get('format_id') or 'best'
+        def _audio_score(fmt: dict) -> tuple:
+            abr = fmt.get('abr') or fmt.get('tbr') or 0
+            size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+            # 适度偏向 m4a，便于后续音频抽取
+            ext_priority = 1 if fmt.get('ext') == 'm4a' else 0
+            return (float(abr), ext_priority, float(size))
 
-        return formats[-1].get('format_id') or 'best'
+        audio_formats.sort(key=_audio_score, reverse=True)
+
+        def _progressive_score(fmt: dict) -> tuple:
+            height = fmt.get('height') or 0
+            bitrate = fmt.get('tbr') or fmt.get('abr') or 0
+            return (int(height), float(bitrate))
+
+        progressive.sort(key=_progressive_score, reverse=True)
+
+        candidates: List[str] = []
+        preferred_tokens = self._expand_format_tokens(preferred_format)
+        available_ids = {
+            str(fmt.get('format_id')): True for fmt in formats if fmt.get('format_id')
+        }
+
+        for token in preferred_tokens:
+            if token in ('bestaudio', 'best', 'worstaudio', 'worst'):
+                continue
+            if token in available_ids and token not in candidates:
+                candidates.append(token)
+
+        for fmt in audio_formats:
+            format_id = fmt.get('format_id')
+            if not format_id:
+                continue
+            format_id = str(format_id)
+            if format_id not in candidates:
+                candidates.append(format_id)
+
+        for fmt in progressive:
+            format_id = fmt.get('format_id')
+            if not format_id:
+                continue
+            format_id = str(format_id)
+            if format_id not in candidates:
+                candidates.append(format_id)
+
+        default_id = info.get('format_id')
+        if default_id:
+            default_id = str(default_id)
+            if default_id not in candidates:
+                candidates.append(default_id)
+
+        # 限制尝试数量，避免低质量格式过多导致重复请求
+        return candidates[:20]
+
+    def _expand_format_tokens(self, format_value: Optional[str]) -> List[str]:
+        if not format_value or not isinstance(format_value, str):
+            return []
+        return [token.strip() for token in format_value.split('/') if token.strip()]
+
+    def _should_retry_format(self, exc: Exception) -> bool:
+        text = str(exc).lower()
+        retriable_markers = (
+            'http error 403',
+            'http error 404',
+            'http error 410',
+            'forbidden',
+            'requested format is not available',
+        )
+        return any(marker in text for marker in retriable_markers)
 
     def _needs_update_hint(self, exc: Exception) -> bool:
         text = str(exc)
