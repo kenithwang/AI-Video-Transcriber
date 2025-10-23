@@ -11,6 +11,7 @@
 ## ✨ 功能亮点
 
 - 🎥 基于 `yt-dlp` 的多平台下载（YouTube、B 站等）。
+- 🛡️ 使用最新 `yt-dlp` 默认客户端（含 `android_sdkless`，自动跟进 player JS），更好应对 YouTube 的限速与签名变动。
 - 🗣️ 使用 Gemini 模型静音对齐分片，提升长音频稳定性。
 - 🧵 支持并行处理，可通过环境变量调节并发量。
 - 📂 自动生成原始逐字稿与整理版本，统一保存在 `temp/`。
@@ -20,7 +21,7 @@
 
 ### 前置条件
 
-- Python 3.8+
+- Python 3.10+
 - FFmpeg
 - `GEMINI_API_KEY`
 

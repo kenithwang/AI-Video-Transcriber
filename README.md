@@ -11,6 +11,7 @@ Minimal, CLI-first Gemini transcription for long-form video or existing scripts.
 ## ✨ Features
 
 - 🎥 **Multi-platform support** powered by `yt-dlp` (YouTube, Bilibili, etc.).
+- 🛡️ **Up-to-date YouTube handling** with the latest `yt-dlp` defaults (`android_sdkless` clients, auto player JS tracking) to stay ahead of recent site changes.
 - 🗣️ **Gemini-based transcription** with silence-aligned chunking for robustness.
 - 🧵 **Parallel processing**; tune chunk concurrency via environment variables.
 - 📂 **Clean outputs**: raw transcript + normalized transcript saved under `temp/`.
@@ -20,7 +21,7 @@ Minimal, CLI-first Gemini transcription for long-form video or existing scripts.
 
 ### Requirements
 
-- Python 3.8+
+- Python 3.10+
 - FFmpeg
 - `GEMINI_API_KEY`
 
