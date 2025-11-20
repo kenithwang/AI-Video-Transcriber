@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -25,6 +26,9 @@ async def process_video(
     temp_dir: Path,
     on_update: Optional[Callable[[dict], Awaitable[None]]] = None,
     keep_audio: bool = False,
+    *,
+    segment_seconds: Optional[int] = None,
+    parallelism: Optional[int] = None,
 ) -> dict:
     """
     Simplified processing pipeline used by CLI: download video, transcribe audio, and write raw/transcript files.
@@ -51,8 +55,19 @@ async def process_video(
     await emit(status)
 
     video_processor = VideoProcessor()
-    # 使用 Obsidian 风格分片转写（默认 300s 静音对齐）
-    transcriber = ObsidianTranscriber(segment_seconds=300)
+    # 使用 Obsidian 风格分片转写
+    # segment_seconds 优先取显式参数，其次取环境变量（SEGMENT_SECONDS/OBSIDIAN_SEGMENT_SECONDS），默认 300
+    seg_env = os.getenv("SEGMENT_SECONDS") or os.getenv("OBSIDIAN_SEGMENT_SECONDS")
+    seg_final: int
+    if segment_seconds is not None:
+        seg_final = int(segment_seconds)
+    else:
+        try:
+            seg_final = int(seg_env) if seg_env else 300
+        except Exception:
+            seg_final = 300
+
+    transcriber = ObsidianTranscriber(segment_seconds=seg_final, parallelism=parallelism)
     warnings: list[str] = []
 
     # 1) Download + convert
