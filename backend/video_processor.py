@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import asyncio
 import logging
 from pathlib import Path
@@ -45,6 +46,16 @@ class VideoProcessor:
             'retries': 10,
             'fragment_retries': 10,
         }
+
+        # 尝试自动配置 JS 解释器 (Node.js)，解决 "No supported JavaScript runtime" 警告
+        js_interpreter = os.getenv("YDL_JS_INTERPRETER")
+        if not js_interpreter:
+            js_interpreter = shutil.which('node') or shutil.which('nodejs')
+        
+        if js_interpreter:
+            self.ydl_opts['js_interpreter'] = js_interpreter
+            logger.debug(f"已配置 yt-dlp 使用 JS 解释器: {js_interpreter}")
+        
         cookie_file = os.getenv("YDL_COOKIEFILE")
         if cookie_file:
             cookie_path = Path(cookie_file).expanduser()
@@ -245,7 +256,16 @@ class VideoProcessor:
             视频信息字典
         """
         try:
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            opts = {'quiet': True}
+            # 继承关键配置，如 JS 解释器和 Cookies
+            if 'js_interpreter' in self.ydl_opts:
+                opts['js_interpreter'] = self.ydl_opts['js_interpreter']
+            if 'cookiefile' in self.ydl_opts:
+                opts['cookiefile'] = self.ydl_opts['cookiefile']
+            if 'http_headers' in self.ydl_opts:
+                opts['http_headers'] = self.ydl_opts['http_headers']
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 return {
                     'title': info.get('title', ''),
