@@ -200,6 +200,18 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # --- 磁盘空间预检与保护 ---
+    if not use_transcript_mode and url:
+        try:
+            perform_storage_check(url, outdir)
+        except KeyboardInterrupt:
+            print("\n已取消")
+            sys.exit(130)
+        except Exception as e:
+            # 预检失败不应完全阻断流程，除非用户手动取消，这里仅做警告
+            print(f"[!] 空间预估出现错误（将跳过预检直接尝试运行）: {e}")
+    # -----------------------
+
     try:
         if args.model:
             os.environ["GEMINI_MODEL"] = args.model
@@ -225,6 +237,70 @@ def main():
     except Exception as e:
         print(f"[!] 处理失败: {e}", file=sys.stderr)
         sys.exit(3)
+
+
+def perform_storage_check(url: str, outdir: Path):
+    """
+    执行磁盘空间检查和用量预估。
+    如果空间不足或低于阈值，会询问用户是否继续。
+    """
+    import shutil
+    import math
+    from backend.video_processor import VideoProcessor
+
+    print("[i] 正在检查磁盘空间并预估用量...")
+
+    # 1. 获取当前可用空间
+    total, used, free = shutil.disk_usage(outdir)
+    free_gb = free / (1024 ** 3)
+    free_mb = free / (1024 ** 2)
+
+    # 2. 获取视频时长进行估算
+    # 策略：基础缓冲 500MB + 每分钟视频 5MB (覆盖下载缓存、音频提取、临时切片等)
+    # 这只是一个保守的启发式估算
+    vp = VideoProcessor()
+    try:
+        info = vp.get_video_info(url)
+        duration_sec = info.get('duration', 0)
+        video_title = info.get('title', 'Unknown')
+        print(f"    - 目标视频: {video_title}")
+        print(f"    - 视频时长: {duration_sec / 60:.1f} 分钟")
+    except Exception as e:
+        print(f"    [!] 无法获取视频信息，无法精确估算: {e}")
+        duration_sec = 0
+
+    base_buffer_mb = 500
+    per_min_mb = 5
+    estimated_mb = base_buffer_mb + (duration_sec / 60 * per_min_mb)
+    estimated_gb = estimated_mb / 1024
+
+    print(f"    - 磁盘可用空间: {free_gb:.2f} GB")
+    print(f"    - 预估所需空间: {estimated_gb:.2f} GB (约 {estimated_mb:.0f} MB)")
+
+    # 3. 判定与交互
+    # 阈值 A: 极低空间保护 (例如小于 1GB)，这通常会导致系统不稳定
+    CRITICAL_LIMIT_GB = 1.0
+    
+    warnings = []
+    if free_gb < CRITICAL_LIMIT_GB:
+        warnings.append(f"警告：磁盘剩余空间 ({free_gb:.2f} GB) 极低，低于安全阈值 {CRITICAL_LIMIT_GB} GB！")
+    
+    if free_mb < estimated_mb:
+        warnings.append(f"警告：可用空间不足以支撑预估用量 (缺口约 {estimated_mb - free_mb:.0f} MB)。")
+
+    if warnings:
+        print("\n" + "="*40)
+        for w in warnings:
+            print(f"[!] {w}")
+        print("="*40)
+        print("继续运行可能会导致任务失败或系统卡顿。")
+        confirm = input("是否强制继续？(输入 'yes' 继续，其他键取消): ").strip().lower()
+        if confirm != 'yes':
+            print("已取消操作。")
+            sys.exit(0)
+        print("[i] 用户选择强制继续...\n")
+    else:
+        print("[i] 空间检查通过。\n")
 
 
 if __name__ == "__main__":
