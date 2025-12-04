@@ -25,7 +25,8 @@ class VideoProcessor:
         )
         format_value = os.getenv(
             "YDL_FORMAT",
-            "bestaudio/best",
+            # 优先下载 m4a 格式，避免 webm 等需要转换的格式
+            "bestaudio[ext=m4a]/bestaudio/best",
         )
         self.ydl_opts = {
             'format': format_value,  # 优先下载最佳音频轨，可用 YDL_FORMAT 覆盖
