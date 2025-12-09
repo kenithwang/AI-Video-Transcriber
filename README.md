@@ -30,16 +30,13 @@ Minimal, CLI-first Gemini transcription for long-form video or existing scripts.
 ```bash
 git clone https://github.com/yourname/AI-Video-Transcriber.git
 cd AI-Video-Transcriber
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-# 可选：./install.sh 自动执行以上步骤
+uv sync
 ```
 
 ### Basic usage
 
 ```bash
-python cli.py --url https://www.youtube.com/watch?v=xxxx
+uv run python cli.py --url https://www.youtube.com/watch?v=xxxx
 ```
 
 - 进度信息会实时输出；默认生成 `temp/raw_*.md` 与 `temp/transcript_*.md`。
@@ -49,7 +46,7 @@ python cli.py --url https://www.youtube.com/watch?v=xxxx
 ### Use an existing transcript
 
 ```bash
-python cli.py --transcript-file path/to/transcript.md
+uv run python cli.py --transcript-file path/to/transcript.md
 ```
 
 - `--transcript` 接受直接传入的文本（请使用引号包裹）。

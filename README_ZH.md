@@ -30,16 +30,13 @@
 ```bash
 git clone https://github.com/yourname/AI-Video-Transcriber.git
 cd AI-Video-Transcriber
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-# 可选：运行 ./install.sh 自动完成上述步骤
+uv sync
 ```
 
 ### 基本用法
 
 ```bash
-python cli.py --url https://www.youtube.com/watch?v=xxxx
+uv run python cli.py --url https://www.youtube.com/watch?v=xxxx
 ```
 
 - 控制台实时显示下载与转写进度。
@@ -50,7 +47,7 @@ python cli.py --url https://www.youtube.com/watch?v=xxxx
 ### 使用现有转录
 
 ```bash
-python cli.py --transcript-file path/to/transcript.md
+uv run python cli.py --transcript-file path/to/transcript.md
 ```
 
 - `--transcript` 可直接传入文本（记得使用引号）。
