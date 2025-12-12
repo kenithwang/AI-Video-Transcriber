@@ -55,17 +55,17 @@ async def process_video(
     await emit(status)
 
     video_processor = VideoProcessor()
-    # 使用 Obsidian 风格分片转写
-    # segment_seconds 优先取显式参数，其次取环境变量（SEGMENT_SECONDS/OBSIDIAN_SEGMENT_SECONDS），默认 300
+    # 使用 File API 转写，默认不切片（8小时内直接上传）
+    # segment_seconds 优先取显式参数，其次取环境变量，默认 28800（8小时）
     seg_env = os.getenv("SEGMENT_SECONDS") or os.getenv("OBSIDIAN_SEGMENT_SECONDS")
     seg_final: int
     if segment_seconds is not None:
         seg_final = int(segment_seconds)
     else:
         try:
-            seg_final = int(seg_env) if seg_env else 300
+            seg_final = int(seg_env) if seg_env else 28800
         except Exception:
-            seg_final = 300
+            seg_final = 28800
 
     transcriber = ObsidianTranscriber(segment_seconds=seg_final, parallelism=parallelism)
     warnings: list[str] = []

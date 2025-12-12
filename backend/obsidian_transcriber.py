@@ -40,21 +40,24 @@ def _guess_language(text: str) -> Optional[str]:
 
 
 class ObsidianTranscriber:
-    """基于已验证的“分片 + 顺序上传”思路的转写器。
+    """基于 Gemini File API 的转写器。
 
     思路：
-    - 保持下载音频不变；
-    - 使用 ffmpeg 切分为固定时长 wav 片段（默认 30s）；
-    - 逐片通过 google-generativeai 调用模型（默认 gemini-2.5-pro 或 .env 中的配置）；
+    - 使用 File API 上传音频（支持最大 2GB / 8.4 小时）；
+    - 如果音频超过 8 小时，才进行切片处理；
+    - 通过 google-generativeai 调用模型进行转写；
     - 仅返回纯文本；最后拼接为一份完整的逐字稿。
     """
 
-    def __init__(self, segment_seconds: int = 300, parallelism: Optional[int] = None):
+    # File API 支持的最大音频时长（秒）：8.4 小时 = 30240 秒，保守取 8 小时
+    MAX_AUDIO_DURATION = 8 * 60 * 60  # 28800 秒
+
+    def __init__(self, segment_seconds: int = 28800, parallelism: Optional[int] = None):
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise RuntimeError('未设置 GEMINI_API_KEY')
         genai.configure(api_key=api_key)
-        self.model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
+        self.model_name = os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview')
         # google-generativeai 期待短名称
         if self.model_name.startswith('models/'):
             self.model_name = self.model_name.split('/', 1)[-1]
@@ -189,27 +192,36 @@ class ObsidianTranscriber:
         return ordered, workdir
 
     def _gen_text(self, chunk: AudioChunk) -> str:
+        """使用 File API 上传音频并转写（支持最大 2GB / 8.4 小时）。"""
         model = self._acquire_model()
+        uploaded = None
         try:
-            with chunk.path.open('rb') as f:
-                data = f.read()
-            # 优先 audio-first，再 prompt-first
-            for parts in ([{"mime_type": "audio/wav", "data": data}],
-                          ['Transcribe the audio. Output plain text only.', {"mime_type": "audio/wav", "data": data}]):
-                try:
-                    resp = model.generate_content(parts, generation_config=self._generation_config)
-                    txt = self._extract(resp)
-                    if txt:
-                        return txt
-                except Exception as e:
-                    logger.info(f'分片生成失败重试: {chunk.path.name}: {e}')
-                    continue
-            # 尝试上传文件路径
+            # 优先使用 File API（支持更大文件，最大 2GB）
             uploaded = genai.upload_file(path=str(chunk.path))
             resp = model.generate_content([uploaded], generation_config=self._generation_config)
             return self._extract(resp)
+        except Exception as e:
+            logger.warning(f'File API 失败，尝试内联方式: {chunk.path.name}: {e}')
+            # Fallback: 内联数据方式（限制 20MB）
+            try:
+                with chunk.path.open('rb') as f:
+                    data = f.read()
+                resp = model.generate_content(
+                    [{"mime_type": "audio/wav", "data": data}],
+                    generation_config=self._generation_config
+                )
+                return self._extract(resp)
+            except Exception as e2:
+                logger.error(f'内联方式也失败: {chunk.path.name}: {e2}')
+                return ''
         finally:
             self._release_model(model)
+            # 清理上传的文件（File API 文件会保留 2 天）
+            if uploaded:
+                try:
+                    genai.delete_file(uploaded.name)
+                except Exception:
+                    pass
 
     def _build_model(self):
         return genai.GenerativeModel(self.model_name, system_instruction=self._system_instruction)
@@ -278,8 +290,15 @@ class ObsidianTranscriber:
         dur = self._ffprobe_duration(p)
         logger.info(f"[obsidian] 文件: {p.name}, 大小: {self._fmt_size(size)}, 时长: {self._fmt_duration(dur)}, 模型: {self.model_name}")
 
-        chunks, workdir = self._split_audio(p)
-        logger.info(f"[obsidian] 切片完成，共 {len(chunks)} 段，准备并行转写（并行度={self.parallelism}）")
+        # 如果音频时长在限制内，直接上传整个文件，不切片
+        if dur <= self.MAX_AUDIO_DURATION and dur <= self.segment_seconds:
+            logger.info(f"[obsidian] 音频时长 {self._fmt_duration(dur)} <= 8小时，直接上传不切片")
+            workdir = Path(tempfile.mkdtemp(prefix='obs_work_', dir=str(p.parent)))
+            # 创建单个 chunk 代表整个文件
+            chunks = [AudioChunk(p, 0.0, dur)]
+        else:
+            chunks, workdir = self._split_audio(p)
+            logger.info(f"[obsidian] 切片完成，共 {len(chunks)} 段，准备并行转写（并行度={self.parallelism}）")
 
         texts_by_index: dict[int, str] = {}
         # 在线程池中并行处理每个分片，保持输出顺序
