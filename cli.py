@@ -96,6 +96,40 @@ async def run_pipeline(url: str, outdir: Path, *,
         for item in warnings:
             print(f" - {item}")
 
+async def run_pipelines(
+    urls: list[str],
+    outdir: Path,
+    *,
+    keep_audio: bool = False,
+    model: str | None = None,
+    continue_on_error: bool = False,
+) -> None:
+    """串行处理多个视频链接。每个 job 完成后沿用 pipeline 的清理逻辑。"""
+    total = len(urls)
+    for idx, url in enumerate(urls, start=1):
+        print(f"\n=== 开始处理 {idx}/{total} ===")
+        # 逐个链接做磁盘空间预检，失败不阻断（除非用户取消）
+        try:
+            perform_storage_check(url, outdir)
+        except KeyboardInterrupt:
+            raise
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[!] 空间预估出现错误（将跳过预检直接尝试运行）: {e}")
+
+        try:
+            await run_pipeline(
+                url=url,
+                outdir=outdir,
+                keep_audio=keep_audio,
+                model=model,
+            )
+        except Exception as e:
+            print(f"[!] 第 {idx} 个链接处理失败: {e}", file=sys.stderr)
+            if not continue_on_error:
+                raise
+
 
 async def run_transcript_pipeline(transcript_text: str, outdir: Path, *,
                                   title: str | None = None,
@@ -144,6 +178,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="AI 视频转录器（CLI 版）")
     parser.add_argument("--url", help="视频链接（如 YouTube/Bilibili）")
+    parser.add_argument("--urls", nargs="+", help="多个视频链接（空格分隔），按顺序串行处理")
     parser.add_argument("--outdir", default="temp", help="输出目录（默认 temp）")
     parser.add_argument("--keep-audio", action="store_true", help="保留下载的音频文件（默认处理完成后删除）")
     parser.add_argument("--transcript-file", help="使用本地转录文件（UTF-8 文本）生成输出")
@@ -151,6 +186,7 @@ def main():
     parser.add_argument("--title", help="指定转录对应的标题（transcript 模式可选）")
     parser.add_argument("--source-lang", help="指定转录原语言代码（例如 en、zh）")
     parser.add_argument("--model", help="统一覆盖 GEMINI_MODEL 的模型名称")
+    parser.add_argument("--continue-on-error", action="store_true", help="批量模式下遇到错误继续处理下一个链接")
     args = parser.parse_args()
 
     transcript_text: str | None = None
@@ -169,9 +205,13 @@ def main():
 
     use_transcript_mode = transcript_text is not None
 
-    if use_transcript_mode and args.url:
-        print("[i] 已检测到 transcript 模式，忽略 --url 参数", file=sys.stderr)
-        args.url = None
+    if use_transcript_mode:
+        if args.url:
+            print("[i] 已检测到 transcript 模式，忽略 --url 参数", file=sys.stderr)
+            args.url = None
+        if args.urls:
+            print("[i] 已检测到 transcript 模式，忽略 --urls 参数", file=sys.stderr)
+            args.urls = None
 
     if not use_transcript_mode and not ensure_ffmpeg():
         sys.exit(1)
@@ -181,15 +221,32 @@ def main():
     for notice in preflight_checks():
         print(notice)
 
-    url = args.url
+    def _collect_urls_interactively() -> list[str]:
+        """交互式收集链接：单行输入，用 ';' 分隔，回车结束。"""
+        try:
+            raw = input("请输入视频链接(URL)，多个用 ; 分隔: ").strip()
+        except EOFError:
+            return []
+        parts = [u.strip() for u in raw.split(";") if u and u.strip()]
+        return parts
+
+    urls: list[str] = []
     if not use_transcript_mode:
-        if not url:
+        if args.urls and args.url:
+            print("[!] 不能同时使用 --url 和 --urls，请只保留其中一个", file=sys.stderr)
+            sys.exit(2)
+        if args.urls:
+            urls = [u.strip() for u in args.urls if u and u.strip()]
+        elif args.url:
+            urls = [args.url.strip()]
+        else:
             try:
-                url = input("请输入视频链接(URL): ").strip()
+                urls = _collect_urls_interactively()
             except KeyboardInterrupt:
                 print()
                 sys.exit(1)
-        if not url:
+
+        if not urls:
             print("[!] 未提供视频链接", file=sys.stderr)
             sys.exit(2)
     else:
@@ -199,18 +256,6 @@ def main():
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-
-    # --- 磁盘空间预检与保护 ---
-    if not use_transcript_mode and url:
-        try:
-            perform_storage_check(url, outdir)
-        except KeyboardInterrupt:
-            print("\n已取消")
-            sys.exit(130)
-        except Exception as e:
-            # 预检失败不应完全阻断流程，除非用户手动取消，这里仅做警告
-            print(f"[!] 空间预估出现错误（将跳过预检直接尝试运行）: {e}")
-    # -----------------------
 
     try:
         if args.model:
@@ -225,11 +270,12 @@ def main():
                 model=args.model,
             ))
         else:
-            asyncio.run(run_pipeline(
-                url=url,
+            asyncio.run(run_pipelines(
+                urls=urls,
                 outdir=outdir,
                 keep_audio=args.keep_audio,
                 model=args.model,
+                continue_on_error=args.continue_on_error,
             ))
     except KeyboardInterrupt:
         print("\n已取消")

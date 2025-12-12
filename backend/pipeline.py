@@ -113,9 +113,17 @@ async def process_video(
     # 清理 temp 下的非 .md 临时文件/目录（仅音视频及切片）
     try:
         import shutil
+        audio_resolved = Path(audio_path).resolve(strict=False)
         for entry in temp_dir.iterdir():
             if entry.is_file():
                 if entry.suffix.lower() in ('.m4a', '.mp3', '.wav', '.webm', '.mp4'):
+                    # keep_audio 时保留当前 job 的音频文件，其余媒体仍清理
+                    if keep_audio:
+                        try:
+                            if entry.resolve(strict=False) == audio_resolved:
+                                continue
+                        except Exception:
+                            pass
                     try:
                         entry.unlink()
                     except Exception:
