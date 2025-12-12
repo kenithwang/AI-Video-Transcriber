@@ -12,8 +12,9 @@
 
 - 🎥 基于 `yt-dlp` 的多平台下载（YouTube、B 站等）。
 - 🛡️ 使用最新 `yt-dlp` 默认客户端（含 `android_sdkless`，自动跟进 player JS），更好应对 YouTube 的限速与签名变动。
-- 🗣️ 使用 Gemini 模型静音对齐分片，提升长音频稳定性。
-- 🧵 支持并行处理，可通过环境变量调节并发量。
+- 🗣️ **Gemini 3 Pro 转写**，使用 File API 高效上传（支持最大 2GB / 8.4 小时）。
+- ⚡ **智能分片**：8 小时内的音频直接上传，无需切片，减少 API 调用。
+- 🧵 超长内容支持并行处理，可通过环境变量调节并发量。
 - 📂 自动生成原始逐字稿与整理版本，统一保存在 `temp/`。
 - 🛠️ 纯 CLI 工作流，无额外前端或提示模版依赖。
 
@@ -56,9 +57,14 @@ uv run python cli.py --transcript-file path/to/transcript.md
 
 ### 可选环境变量
 
-- `BILIBILI_COOKIE_FILE`：Netscape 格式 Cookie，帮助 yt-dlp 下载受限视频。
-- `YDL_USER_AGENT`：自定义 UA，避免部分网站屏蔽默认 UA。
-- `TRANSCRIBE_CONCURRENCY` / `OBSIDIAN_CONCURRENCY`：设置转写分片并发数（默认自动）。
+| 变量 | 说明 |
+|------|------|
+| `GEMINI_API_KEY` | **必需。** Gemini API 密钥。 |
+| `GEMINI_MODEL` | 使用的模型（默认：`gemini-3-pro-preview`）。 |
+| `SEGMENT_SECONDS` | 音频切片最大时长，单位秒（默认：`28800` = 8 小时）。 |
+| `TRANSCRIBE_CONCURRENCY` | 并行转写线程数（默认自动）。 |
+| `BILIBILI_COOKIE_FILE` | Netscape 格式 Cookie，用于下载 B 站会员视频。 |
+| `YDL_USER_AGENT` | 自定义 UA，避免被屏蔽。 |
 
 ## 📦 输出文件
 
@@ -68,7 +74,7 @@ uv run python cli.py --transcript-file path/to/transcript.md
 
 ## 🛠️ 开发说明
 
-- 核心逻辑位于 `backend/`（Gemini 分片转写 + `yt-dlp` 下载封装）。
+- 核心逻辑位于 `backend/`（Gemini File API 转写 + `yt-dlp` 下载封装）。
 - CLI 入口为 `cli.py`，日志信息直接输出到终端。
 
 ## 📄 许可协议

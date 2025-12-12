@@ -12,8 +12,9 @@ Minimal, CLI-first Gemini transcription for long-form video or existing scripts.
 
 - 🎥 **Multi-platform support** powered by `yt-dlp` (YouTube, Bilibili, etc.).
 - 🛡️ **Up-to-date YouTube handling** with the latest `yt-dlp` defaults (`android_sdkless` clients, auto player JS tracking) to stay ahead of recent site changes.
-- 🗣️ **Gemini-based transcription** with silence-aligned chunking for robustness.
-- 🧵 **Parallel processing**; tune chunk concurrency via environment variables.
+- 🗣️ **Gemini 3 Pro transcription** using File API for efficient uploads (supports up to 2GB / 8.4 hours per file).
+- ⚡ **Smart chunking**: audio ≤8 hours uploads directly without splitting, reducing API calls.
+- 🧵 **Parallel processing** for longer content; tune concurrency via environment variables.
 - 📂 **Clean outputs**: raw transcript + normalized transcript saved under `temp/`.
 - 🛠️ **CLI-only footprint** – no web server, no prompt templates, no extra UI.
 
@@ -39,9 +40,9 @@ uv sync
 uv run python cli.py --url https://www.youtube.com/watch?v=xxxx
 ```
 
-- 进度信息会实时输出；默认生成 `temp/raw_*.md` 与 `temp/transcript_*.md`。
-- 通过 `--keep-audio` 可保留下载的音频文件；默认处理完成后删除。
-- 若需要临时切换 Gemini 模型，可添加 `--model models/gemini-2.0-pro-exp` 等。
+- Progress is displayed in real-time; outputs are saved to `temp/raw_*.md` and `temp/transcript_*.md`.
+- Use `--keep-audio` to retain the downloaded audio file (deleted by default after processing).
+- Use `--model` to override the default model (e.g., `--model gemini-2.5-pro`).
 
 ### Use an existing transcript
 
@@ -49,26 +50,31 @@ uv run python cli.py --url https://www.youtube.com/watch?v=xxxx
 uv run python cli.py --transcript-file path/to/transcript.md
 ```
 
-- `--transcript` 接受直接传入的文本（请使用引号包裹）。
-- `--title` 覆盖默认文件名前缀，便于管理多个输出。
-- `--source-lang` 可手动标注原始语言（例如 `--source-lang en`）。
+- `--transcript` accepts inline text (use quotes).
+- `--title` overrides the output filename prefix.
+- `--source-lang` manually specifies the source language (e.g., `--source-lang en`).
 
-### Optional environment
+### Optional environment variables
 
-- `BILIBILI_COOKIE_FILE`: Netscape-format cookie file to help yt-dlp access members-only videos.
-- `YDL_USER_AGENT`: Custom UA string if the default desktop UA is blocked.
-- `TRANSCRIBE_CONCURRENCY` / `OBSIDIAN_CONCURRENCY`: Override parallel chunk workers (default自动).
+| Variable | Description |
+|----------|-------------|
+| `GEMINI_API_KEY` | **Required.** Your Gemini API key. |
+| `GEMINI_MODEL` | Model to use (default: `gemini-3-pro-preview`). |
+| `SEGMENT_SECONDS` | Max audio chunk duration in seconds (default: `28800` = 8 hours). |
+| `TRANSCRIBE_CONCURRENCY` | Parallel workers for chunked transcription (auto by default). |
+| `BILIBILI_COOKIE_FILE` | Netscape-format cookie file for members-only Bilibili videos. |
+| `YDL_USER_AGENT` | Custom User-Agent if the default is blocked. |
 
 ## 📦 Outputs
 
-- `raw_*.md`: 原始 Gemini 输出（含模型信息、语言检测）。
-- `transcript_*.md`: 规范化带标题的转录文本。
-- 可选：若启用 `--keep-audio`，会在 `temp/` 中保留音频文件路径。
+- `raw_*.md`: Raw Gemini output with model info and detected language.
+- `transcript_*.md`: Normalized transcript with title and source URL.
+- Audio files are retained in `temp/` only if `--keep-audio` is specified.
 
 ## 🛠️ Development
 
-- 核心处理位于 `backend/`（Gemini 分片转写 + `yt-dlp` 下载封装）。
-- CLI 入口为 `cli.py`，日志直接打印到终端供监控。
+- Core logic lives in `backend/` (Gemini File API transcription + `yt-dlp` download wrapper).
+- CLI entry point is `cli.py`; logs are printed directly to the terminal.
 
 ## 📄 License
 
