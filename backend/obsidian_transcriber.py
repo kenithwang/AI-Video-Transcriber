@@ -30,9 +30,20 @@ class AudioChunk:
 
 def _guess_language(text: str) -> Optional[str]:
     total = len(text) or 1
-    zh = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+    # 日语假名检测 (平假名 + 片假名)
+    hiragana = sum(1 for ch in text if '\u3040' <= ch <= '\u309f')
+    katakana = sum(1 for ch in text if '\u30a0' <= ch <= '\u30ff')
+    jp_kana = hiragana + katakana
+    # 汉字 (中日共用)
+    kanji = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+    # 英文字母
     en = sum(1 for ch in text if (ch.isascii() and ch.isalpha()))
-    if zh / total > 0.2:
+
+    # 如果有假名，基本可以确定是日语
+    if jp_kana / total > 0.05:
+        return 'ja'
+    # 如果只有汉字没有假名，判定为中文
+    if kanji / total > 0.2:
         return 'zh'
     if en / total > 0.2:
         return 'en'
@@ -77,13 +88,20 @@ class ObsidianTranscriber:
             self.parallelism = min(6, max(3, cpu_default // 2 or 1))
 
         self._system_instruction = (
-            'You transcribe audio to plain text. Output only the verbatim transcript. '
-            'If the language is Chinese, use Simplified Chinese characters. No headings, no preface.'
+            'You are an expert audio transcriber. Your task is to transcribe audio to plain text accurately and completely. '
+            'Output only the verbatim transcript without any headings, preface, or commentary. '
+            'For Chinese audio, use Simplified Chinese characters. '
+            'For Japanese audio, use appropriate Japanese characters (Kanji, Hiragana, Katakana). '
+            'Transcribe the entire audio from start to finish.'
+        )
+        self._transcribe_prompt = (
+            'Please transcribe this entire audio file verbatim. '
+            'Output only the transcript text, nothing else.'
         )
         self._generation_config = genai.types.GenerationConfig(
             temperature=0.0,
             response_mime_type='text/plain',
-            max_output_tokens=4096,
+            max_output_tokens=65536,
         )
         self._model_lock = Lock()
         self._max_models = max(1, self.parallelism)
@@ -191,6 +209,20 @@ class ObsidianTranscriber:
             ordered.append(AudioChunk(src, start, end))
         return ordered, workdir
 
+    def _get_mime_type(self, path: Path) -> str:
+        """根据文件扩展名返回正确的 MIME 类型。"""
+        ext = path.suffix.lower()
+        mime_map = {
+            '.wav': 'audio/wav',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.aac': 'audio/aac',
+            '.ogg': 'audio/ogg',
+            '.flac': 'audio/flac',
+            '.webm': 'audio/webm',
+        }
+        return mime_map.get(ext, 'audio/mp4')  # 默认使用 audio/mp4
+
     def _gen_text(self, chunk: AudioChunk) -> str:
         """使用 File API 上传音频并转写（支持最大 2GB / 8.4 小时）。"""
         model = self._acquire_model()
@@ -198,7 +230,11 @@ class ObsidianTranscriber:
         try:
             # 优先使用 File API（支持更大文件，最大 2GB）
             uploaded = genai.upload_file(path=str(chunk.path))
-            resp = model.generate_content([uploaded], generation_config=self._generation_config)
+            # 必须同时传递音频文件和文本提示词
+            resp = model.generate_content(
+                [uploaded, self._transcribe_prompt],
+                generation_config=self._generation_config
+            )
             return self._extract(resp)
         except Exception as e:
             logger.warning(f'File API 失败，尝试内联方式: {chunk.path.name}: {e}')
@@ -206,8 +242,10 @@ class ObsidianTranscriber:
             try:
                 with chunk.path.open('rb') as f:
                     data = f.read()
+                # 使用正确的 MIME 类型
+                mime_type = self._get_mime_type(chunk.path)
                 resp = model.generate_content(
-                    [{"mime_type": "audio/wav", "data": data}],
+                    [{"mime_type": mime_type, "data": data}, self._transcribe_prompt],
                     generation_config=self._generation_config
                 )
                 return self._extract(resp)
