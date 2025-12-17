@@ -88,11 +88,16 @@ class ObsidianTranscriber:
             self.parallelism = min(6, max(3, cpu_default // 2 or 1))
 
         self._system_instruction = (
-            'You are an expert audio transcriber. Your task is to transcribe audio to plain text accurately and completely. '
-            'Output only the verbatim transcript without any headings, preface, or commentary. '
-            'For Chinese audio, use Simplified Chinese characters. '
-            'For Japanese audio, use appropriate Japanese characters (Kanji, Hiragana, Katakana). '
-            'Transcribe the entire audio from start to finish.'
+            'You are a professional multilingual transcriber. Your task is to transcribe the audio file VERBATIM (word-for-word) into text.\n\n'
+            '**STRICT GUIDELINES:**\n'
+            '1. **Languages:** The audio contains a mix of **Mandarin Chinese**, **English**, and **Japanese**.\n'
+            '   - Transcribe exactly as spoken in the original language.\n'
+            '   - **DO NOT TRANSLATE.** (e.g., If spoken in Japanese, write in Japanese Kanji/Kana; if in English, write in English).\n'
+            '2. **Speaker Identification:** Identify different speakers. Label them as "**Speaker 1:**", "**Speaker 2:**", etc. Start a new paragraph every time the speaker changes.\n'
+            '3. **Accuracy:** Do not summarize. **Do not correct grammar.** Do not paraphrase. Include every detail.\n'
+            '4. **Format:** Output plain text with clear paragraph breaks.\n'
+            '5. **Noise:** Ignore non-speech sounds (like [laughter], [silence], [typing sounds]).\n\n'
+            'Please start the transcription immediately.'
         )
         self._transcribe_prompt = (
             'Please transcribe this entire audio file verbatim. '
