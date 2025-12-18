@@ -85,12 +85,7 @@ async def process_video(
         return transcriber.transcribe(Path(audio_path))
     raw_script, detected_language = await _asyncio.to_thread(_do_transcribe)
 
-    # Persist raw whisper output for reference
     safe_title = _sanitize_title_for_filename(video_title)
-    raw_md_filename = f"raw_{safe_title}_{short_id}.md"
-    raw_md_path = temp_dir / raw_md_filename
-    await _write_file(raw_md_path, (raw_script or "") + f"\n\nsource: {url}\n")
-
     script_with_title = f"# {video_title}\n\n{raw_script}\n\nsource: {url}\n"
 
     # detected_language 已由云端返回；如无则保持 None
@@ -146,7 +141,6 @@ async def process_video(
         "status": "completed",
         "video_title": video_title,
         "detected_language": detected_language,
-        "raw_script_file": raw_md_filename,
         "transcript_file": transcript_filename,
         "short_id": short_id,
         "audio_file": None if audio_deleted else audio_path,
@@ -196,11 +190,6 @@ async def process_transcript_input(
     status.update({"progress": 15, "message": "transcript ready"})
     await emit(status)
 
-    # 写入原始转录文件
-    raw_md_filename = f"raw_{safe_title}_{short_id}.md"
-    raw_md_path = temp_dir / raw_md_filename
-    await _write_file(raw_md_path, transcript)
-
     script_with_title = transcript if transcript.startswith("# ") else f"# {video_title or safe_title}\n\n{transcript}\n"
 
     warnings: list[str] = []
@@ -218,7 +207,6 @@ async def process_transcript_input(
         "status": "completed",
         "video_title": video_title or safe_title,
         "detected_language": detected_language,
-        "raw_script_file": raw_md_filename,
         "transcript_file": transcript_filename,
         "short_id": short_id,
         "warnings": warnings,

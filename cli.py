@@ -83,12 +83,10 @@ async def run_pipeline(url: str, outdir: Path, *,
     print(f"标题: {res.get('video_title')}")
     print(f"检测语言: {res.get('detected_language')}")
     print("输出文件：")
-    for key in ("raw_script_file", "transcript_file"):
-        val = res.get(key)
-        if val:
-            print(f" - {key}: {outdir / val}")
+    if res.get("transcript_file"):
+        print(f" - transcript: {outdir / res['transcript_file']}")
     if res.get("audio_file") and not res.get("audio_deleted"):
-        print(f" - audio_file: {res['audio_file']}")
+        print(f" - audio: {res['audio_file']}")
 
     warnings = res.get('warnings') or []
     if warnings:
@@ -158,10 +156,8 @@ async def run_transcript_pipeline(transcript_text: str, outdir: Path, *,
     print(f"标题: {res.get('video_title')}")
     print(f"检测语言: {res.get('detected_language')}")
     print("输出文件：")
-    for key in ("raw_script_file", "transcript_file"):
-        val = res.get(key)
-        if val:
-            print(f" - {key}: {outdir / val}")
+    if res.get("transcript_file"):
+        print(f" - transcript: {outdir / res['transcript_file']}")
 
     warnings = res.get('warnings') or []
     if warnings:
