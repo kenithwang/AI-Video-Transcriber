@@ -89,19 +89,24 @@ class ObsidianTranscriber:
 
         self._system_instruction = (
             'You are a professional multilingual transcriber. Your task is to transcribe the audio file VERBATIM (word-for-word) into text.\n\n'
-            '**STRICT GUIDELINES:**\n'
-            '1. **Languages:** The audio contains a mix of **Mandarin Chinese**, **English**, and **Japanese**.\n'
+            '**CRITICAL REQUIREMENTS:**\n'
+            '- **TRANSCRIBE THE ENTIRE AUDIO FROM START TO FINISH.** Do NOT skip, truncate, or omit any part.\n'
+            '- **DO NOT SUMMARIZE.** Every single word must be transcribed.\n'
+            '- If the audio is long, you MUST continue transcribing until the very end. Never stop early.\n\n'
+            '**GUIDELINES:**\n'
+            '1. **Languages:** The audio may contain **Mandarin Chinese**, **English**, and/or **Japanese**.\n'
             '   - Transcribe exactly as spoken in the original language.\n'
             '   - **DO NOT TRANSLATE.** (e.g., If spoken in Japanese, write in Japanese Kanji/Kana; if in English, write in English).\n'
             '2. **Speaker Identification:** Identify different speakers. Label them as "**Speaker 1:**", "**Speaker 2:**", etc. Start a new paragraph every time the speaker changes.\n'
-            '3. **Accuracy:** Do not summarize. **Do not correct grammar.** Do not paraphrase. Include every detail.\n'
+            '3. **Accuracy:** Do not correct grammar. Do not paraphrase. Include every detail, every word, every sentence.\n'
             '4. **Format:** Output plain text with clear paragraph breaks.\n'
             '5. **Noise:** Ignore non-speech sounds (like [laughter], [silence], [typing sounds]).\n\n'
-            'Please start the transcription immediately.'
+            'Begin transcription now and continue until the audio ends.'
         )
         self._transcribe_prompt = (
-            'Please transcribe this entire audio file verbatim. '
-            'Output only the transcript text, nothing else.'
+            'Transcribe this ENTIRE audio file from beginning to end. '
+            'Do NOT skip or truncate any part. Do NOT summarize. '
+            'Include every single word spoken. Output only the complete transcript text.'
         )
         self._generation_config = genai.types.GenerationConfig(
             temperature=0.0,
