@@ -1,6 +1,7 @@
 import os
 import json
 import shutil
+import subprocess
 import asyncio
 import logging
 from pathlib import Path
@@ -89,16 +90,17 @@ class VideoProcessor:
         self._update_hint_checked = False
         self._cached_update_hint: Optional[str] = None
 
-    async def download_and_convert(self, url: str, output_dir: Path) -> tuple[str, str]:
+    async def download_and_convert(self, url: str, output_dir: Path, *, video_info: Optional[dict] = None) -> tuple[str, str]:
         """
         下载视频并转换为m4a格式
-        
+
         Args:
             url: 视频链接
             output_dir: 输出目录
-            
+            video_info: 预获取的视频元数据（可选），避免重复调用 yt-dlp
+
         Returns:
-            转换后的音频文件路径
+            转换后的音频文件路径和视频标题
         """
         try:
             # 创建输出目录
@@ -186,8 +188,12 @@ class VideoProcessor:
                     raise last_exc
                 raise Exception("未能获取下载信息")
 
+            # 优先使用缓存的视频信息（如果有的话）
             video_title = info.get('title', 'unknown')
             expected_duration = info.get('duration') or 0
+            if video_info:
+                video_title = video_info.get('title') or video_title
+                expected_duration = video_info.get('duration') or expected_duration
             logger.info(f"视频标题: {video_title}")
             
             # 查找生成的m4a文件
@@ -205,11 +211,14 @@ class VideoProcessor:
             
             # 校验时长，如果和源视频差异较大，尝试一次ffmpeg规范化重封装
             try:
-                import subprocess, shlex
-
                 def _probe(path: str) -> float:
-                    cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(path)}"
-                    out_local = subprocess.check_output(cmd, shell=True).decode().strip()
+                    cmd = [
+                        'ffprobe', '-v', 'error',
+                        '-show_entries', 'format=duration',
+                        '-of', 'default=noprint_wrappers=1:nokey=1',
+                        path
+                    ]
+                    out_local = subprocess.check_output(cmd).decode().strip()
                     return float(out_local) if out_local else 0.0
 
                 out = _probe(audio_file)
@@ -223,8 +232,12 @@ class VideoProcessor:
                 )
                 try:
                     fixed_path = str(output_dir / f"audio_{unique_id}_fixed.m4a")
-                    fix_cmd = f"ffmpeg -y -i {shlex.quote(audio_file)} -vn -c:a aac -b:a 160k -movflags +faststart {shlex.quote(fixed_path)}"
-                    subprocess.check_call(fix_cmd, shell=True)
+                    fix_cmd = [
+                        'ffmpeg', '-y', '-i', audio_file,
+                        '-vn', '-c:a', 'aac', '-b:a', '160k',
+                        '-movflags', '+faststart', fixed_path
+                    ]
+                    subprocess.check_call(fix_cmd)
                     # 用修复后的文件替换
                     audio_file = fixed_path
                     # 重新探测

@@ -11,6 +11,20 @@ from .obsidian_transcriber import ObsidianTranscriber
 logger = logging.getLogger(__name__)
 
 
+def _create_emitter(on_update: Optional[Callable[[dict], Awaitable[None]]]):
+    """创建进度回调封装函数。"""
+    def emit(update: dict):
+        if on_update:
+            return on_update(update)
+        return asyncio.sleep(0)
+    return emit
+
+
+async def _write_file(path: Path, content: str) -> None:
+    """异步写入文件。"""
+    await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+
+
 def _sanitize_title_for_filename(title: str) -> str:
     """Sanitize video title for safe filenames."""
     import re
@@ -29,21 +43,18 @@ async def process_video(
     *,
     segment_seconds: Optional[int] = None,
     parallelism: Optional[int] = None,
+    video_info: Optional[dict] = None,
 ) -> dict:
     """
     Simplified processing pipeline used by CLI: download video, transcribe audio, and write raw/transcript files.
 
+    Args:
+        video_info: 预获取的视频元数据（可选），避免重复调用 yt-dlp。
+
     Returns a result dict with output file names and detected language.
     """
     temp_dir.mkdir(parents=True, exist_ok=True)
-
-    def emit(update: dict):
-        if on_update:
-            return on_update(update)
-        return asyncio.sleep(0)
-
-    async def _write_file(path: Path, content: str) -> None:
-        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+    emit = _create_emitter(on_update)
 
     short_id = uuid.uuid4().hex[:6]
     status = {
@@ -73,7 +84,7 @@ async def process_video(
     # 1) Download + convert
     status.update({"progress": 10, "message": "downloading video..."})
     await emit(status)
-    audio_path, video_title = await video_processor.download_and_convert(url, temp_dir)
+    audio_path, video_title = await video_processor.download_and_convert(url, temp_dir, video_info=video_info)
 
     status.update({"progress": 35, "message": "video downloaded; transcribing..."})
     await emit(status)
@@ -102,7 +113,8 @@ async def process_video(
         try:
             Path(audio_path).unlink(missing_ok=True)
             audio_deleted = True
-        except Exception:
+        except Exception as e:
+            logger.warning(f"删除音频文件失败: {audio_path}, 错误: {e}")
             audio_deleted = False
 
     # 清理 temp 下的非 .md 临时文件/目录（仅音视频及切片）
@@ -121,17 +133,17 @@ async def process_video(
                             pass
                     try:
                         entry.unlink()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"清理媒体文件失败: {entry}, 错误: {e}")
             elif entry.is_dir():
                 name = entry.name.lower()
                 if name.startswith('obs_work_') or name.startswith('chunks'):
                     try:
                         shutil.rmtree(entry, ignore_errors=True)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+                    except Exception as e:
+                        logger.debug(f"清理临时目录失败: {entry}, 错误: {e}")
+    except Exception as e:
+        logger.debug(f"清理临时文件时发生错误: {e}")
 
     final_status = {**status, "progress": 100, "status": "completed"}
     final_status["message"] = "completed (with warnings)" if warnings else "completed"
@@ -160,14 +172,7 @@ async def process_transcript_input(
     """处理现有转录文本，仅保存标准化转录文件。"""
 
     temp_dir.mkdir(parents=True, exist_ok=True)
-
-    def emit(update: dict):
-        if on_update:
-            return on_update(update)
-        return asyncio.sleep(0)
-
-    async def _write_file(path: Path, content: str) -> None:
-        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+    emit = _create_emitter(on_update)
 
     transcript = transcript or ""
     if not transcript.strip():

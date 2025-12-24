@@ -59,7 +59,8 @@ def preflight_checks() -> list[str]:
 
 async def run_pipeline(url: str, outdir: Path, *,
                       keep_audio: bool = False,
-                      model: str | None = None) -> None:
+                      model: str | None = None,
+                      video_info: dict | None = None) -> None:
     from backend.pipeline import process_video
 
     async def on_update(evt: dict):
@@ -77,6 +78,7 @@ async def run_pipeline(url: str, outdir: Path, *,
         temp_dir=outdir,
         on_update=on_update,
         keep_audio=keep_audio,
+        video_info=video_info,
     )
 
     print("\n=== 处理完成 ===")
@@ -107,8 +109,10 @@ async def run_pipelines(
     for idx, url in enumerate(urls, start=1):
         print(f"\n=== 开始处理 {idx}/{total} ===")
         # 逐个链接做磁盘空间预检，失败不阻断（除非用户取消）
+        # 同时获取视频元数据供后续复用
+        video_info = None
         try:
-            perform_storage_check(url, outdir)
+            video_info = perform_storage_check(url, outdir)
         except KeyboardInterrupt:
             raise
         except SystemExit:
@@ -122,6 +126,7 @@ async def run_pipelines(
                 outdir=outdir,
                 keep_audio=keep_audio,
                 model=model,
+                video_info=video_info,
             )
         except Exception as e:
             print(f"[!] 第 {idx} 个链接处理失败: {e}", file=sys.stderr)
@@ -281,13 +286,15 @@ def main():
         sys.exit(3)
 
 
-def perform_storage_check(url: str, outdir: Path):
+def perform_storage_check(url: str, outdir: Path) -> dict | None:
     """
     执行磁盘空间检查和用量预估。
     如果空间不足或低于阈值，会询问用户是否继续。
+
+    Returns:
+        视频元数据字典（供后续复用），如果获取失败则返回 None。
     """
     import shutil
-    import math
     from backend.video_processor import VideoProcessor
 
     print("[i] 正在检查磁盘空间并预估用量...")
@@ -301,6 +308,8 @@ def perform_storage_check(url: str, outdir: Path):
     # 策略：基础缓冲 500MB + 每分钟视频 5MB (覆盖下载缓存、音频提取、临时切片等)
     # 这只是一个保守的启发式估算
     vp = VideoProcessor()
+    info = None
+    duration_sec = 0
     try:
         info = vp.get_video_info(url)
         duration_sec = info.get('duration', 0)
@@ -309,7 +318,6 @@ def perform_storage_check(url: str, outdir: Path):
         print(f"    - 视频时长: {duration_sec / 60:.1f} 分钟")
     except Exception as e:
         print(f"    [!] 无法获取视频信息，无法精确估算: {e}")
-        duration_sec = 0
 
     base_buffer_mb = 500
     per_min_mb = 5
@@ -322,11 +330,11 @@ def perform_storage_check(url: str, outdir: Path):
     # 3. 判定与交互
     # 阈值 A: 极低空间保护 (例如小于 1GB)，这通常会导致系统不稳定
     CRITICAL_LIMIT_GB = 1.0
-    
+
     warnings = []
     if free_gb < CRITICAL_LIMIT_GB:
         warnings.append(f"警告：磁盘剩余空间 ({free_gb:.2f} GB) 极低，低于安全阈值 {CRITICAL_LIMIT_GB} GB！")
-    
+
     if free_mb < estimated_mb:
         warnings.append(f"警告：可用空间不足以支撑预估用量 (缺口约 {estimated_mb - free_mb:.0f} MB)。")
 
@@ -343,6 +351,8 @@ def perform_storage_check(url: str, outdir: Path):
         print("[i] 用户选择强制继续...\n")
     else:
         print("[i] 空间检查通过。\n")
+
+    return info
 
 
 if __name__ == "__main__":

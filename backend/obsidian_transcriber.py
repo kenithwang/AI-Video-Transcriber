@@ -1,6 +1,5 @@
 import os
 import logging
-import shlex
 import subprocess
 import tempfile
 import re
@@ -135,20 +134,25 @@ class ObsidianTranscriber:
         workdir = Path(tempfile.mkdtemp(prefix='obs_work_', dir=str(audio_path.parent)))
         norm_wav = workdir / 'normalized.wav'
         # 规范化为 16kHz/mono WAV
-        cmd_norm = f"ffmpeg -hide_banner -loglevel error -y -i {shlex.quote(str(audio_path))} -ac 1 -ar 16000 {shlex.quote(str(norm_wav))}"
-        subprocess.check_call(cmd_norm, shell=True)
+        cmd_norm = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+            '-i', str(audio_path), '-ac', '1', '-ar', '16000', str(norm_wav)
+        ]
+        subprocess.check_call(cmd_norm)
 
         duration = self._ffprobe_duration(norm_wav)
         if duration <= 0:
             raise RuntimeError('无法探测音频时长')
 
         # 使用 silencedetect 检测静音区间（阈值约 -30dB，窗口 0.3s）
-        cmd_sil = (
-            f"ffmpeg -hide_banner -nostats -i {shlex.quote(str(norm_wav))} "
-            f"-af silencedetect=noise=-30dB:d=0.3 -f null - 2>&1"
-        )
+        cmd_sil = [
+            'ffmpeg', '-hide_banner', '-nostats',
+            '-i', str(norm_wav),
+            '-af', 'silencedetect=noise=-30dB:d=0.3',
+            '-f', 'null', '-'
+        ]
         try:
-            out = subprocess.check_output(cmd_sil, shell=True, stderr=subprocess.STDOUT).decode('utf-8', 'ignore')
+            out = subprocess.check_output(cmd_sil, stderr=subprocess.STDOUT).decode('utf-8', 'ignore')
         except subprocess.CalledProcessError as e:
             out = e.output.decode('utf-8', 'ignore') if e.output else ''
 
@@ -349,48 +353,50 @@ class ObsidianTranscriber:
             chunks, workdir = self._split_audio(p)
             logger.info(f"[obsidian] 切片完成，共 {len(chunks)} 段，准备并行转写（并行度={self.parallelism}）")
 
-        texts_by_index: dict[int, str] = {}
-        # 在线程池中并行处理每个分片，保持输出顺序
-        with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
-            futures = {}
-            for idx, chunk in enumerate(chunks, 1):
-                logger.info(
-                    f"[obsidian] 排队分片 {idx}/{len(chunks)}: {chunk.path.name} ~{self._fmt_duration(chunk.duration)}"
-                )
-                fut = ex.submit(self._gen_text, chunk)
-                futures[fut] = idx
-
-            done_count = 0
-            for fut in as_completed(futures):
-                idx = futures[fut]
-                try:
-                    t = fut.result()
-                except Exception as e:
-                    logger.error(f"[obsidian] 分片 {idx} 处理异常: {e}")
-                    t = ''
-                if t:
-                    texts_by_index[idx] = t
-                else:
-                    logger.warning(f"[obsidian] 分片无文本输出: chunk_{idx:03d}.wav")
-                done_count += 1
-                if done_count % max(1, len(chunks)//10) == 0 or done_count == len(chunks):
-                    logger.info(f"[obsidian] 并行转写进度: {done_count}/{len(chunks)} 完成")
-
-        # 按原顺序合并
-        texts_ordered: List[str] = [texts_by_index.get(i, '') for i in range(1, len(chunks)+1)]
-        body = '\n\n'.join([t for t in texts_ordered if t]).strip()
-        det = language or _guess_language(body)
-        # 返回 Markdown 与语言检测
-        lines = [
-            '# Video Transcription', '',
-            f'**Detected Language:** {det or "unknown"}',
-            f'**Model:** {self.model_name}', '',
-            '## Transcription Content', '',
-            body, ''
-        ]
-        # 清理工作目录
         try:
-            shutil.rmtree(workdir, ignore_errors=True)
-        except Exception:
-            pass
-        return ('\n'.join(lines), det)
+            texts_by_index: dict[int, str] = {}
+            # 在线程池中并行处理每个分片，保持输出顺序
+            with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
+                futures = {}
+                for idx, chunk in enumerate(chunks, 1):
+                    logger.info(
+                        f"[obsidian] 排队分片 {idx}/{len(chunks)}: {chunk.path.name} ~{self._fmt_duration(chunk.duration)}"
+                    )
+                    fut = ex.submit(self._gen_text, chunk)
+                    futures[fut] = idx
+
+                done_count = 0
+                for fut in as_completed(futures):
+                    idx = futures[fut]
+                    try:
+                        t = fut.result()
+                    except Exception as e:
+                        logger.error(f"[obsidian] 分片 {idx} 处理异常: {e}")
+                        t = ''
+                    if t:
+                        texts_by_index[idx] = t
+                    else:
+                        logger.warning(f"[obsidian] 分片无文本输出: chunk_{idx:03d}.wav")
+                    done_count += 1
+                    if done_count % max(1, len(chunks)//10) == 0 or done_count == len(chunks):
+                        logger.info(f"[obsidian] 并行转写进度: {done_count}/{len(chunks)} 完成")
+
+            # 按原顺序合并
+            texts_ordered: List[str] = [texts_by_index.get(i, '') for i in range(1, len(chunks)+1)]
+            body = '\n\n'.join([t for t in texts_ordered if t]).strip()
+            det = language or _guess_language(body)
+            # 返回 Markdown 与语言检测
+            lines = [
+                '# Video Transcription', '',
+                f'**Detected Language:** {det or "unknown"}',
+                f'**Model:** {self.model_name}', '',
+                '## Transcription Content', '',
+                body, ''
+            ]
+            return ('\n'.join(lines), det)
+        finally:
+            # 确保工作目录始终被清理
+            try:
+                shutil.rmtree(workdir, ignore_errors=True)
+            except Exception as e:
+                logger.debug(f"清理工作目录失败: {workdir}, 错误: {e}")
