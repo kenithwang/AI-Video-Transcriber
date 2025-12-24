@@ -60,7 +60,8 @@ def preflight_checks() -> list[str]:
 async def run_pipeline(url: str, outdir: Path, *,
                       keep_audio: bool = False,
                       model: str | None = None,
-                      video_info: dict | None = None) -> None:
+                      video_info: dict | None = None,
+                      note_mode: int | None = None) -> None:
     from backend.pipeline import process_video
 
     async def on_update(evt: dict):
@@ -81,7 +82,7 @@ async def run_pipeline(url: str, outdir: Path, *,
         video_info=video_info,
     )
 
-    print("\n=== 处理完成 ===")
+    print("\n=== 转录完成 ===")
     print(f"标题: {res.get('video_title')}")
     print(f"检测语言: {res.get('detected_language')}")
     print("输出文件：")
@@ -96,6 +97,64 @@ async def run_pipeline(url: str, outdir: Path, *,
         for item in warnings:
             print(f" - {item}")
 
+    # Generate note if mode is specified
+    if note_mode is not None and res.get("transcript_file"):
+        print("\n=== 生成 Note ===")
+        await generate_note_from_transcript(
+            transcript_path=outdir / res['transcript_file'],
+            title=res.get('video_title', 'untitled'),
+            outdir=outdir,
+            mode_index=note_mode,
+        )
+
+async def generate_note_from_transcript(
+    transcript_path: Path,
+    title: str,
+    outdir: Path,
+    mode_index: int,
+) -> None:
+    """Read transcript and generate note using selected mode."""
+    import asyncio as _asyncio
+    import subprocess
+    from backend.note_generator import NoteGenerator, generate_note_filename
+
+    transcript_content = transcript_path.read_text(encoding='utf-8')
+    generator = NoteGenerator()
+
+    def _do_generate():
+        return generator.generate_note(transcript_content, mode_index=mode_index)
+
+    print(f"[i] 正在生成 Note...")
+    note_content = await _asyncio.to_thread(_do_generate)
+
+    note_filename = generate_note_filename(title)
+    note_path = outdir / note_filename
+    note_path.write_text(note_content, encoding='utf-8')
+
+    print(f"[i] Note 已保存: {note_path}")
+
+    # Sync to OneDrive
+    onedrive_path = "Obsidian Vault:/应用/remotely-save/Obsidian Vault/AI Transcribe/Transcript/"
+    print(f"[i] 正在同步到 OneDrive...")
+    try:
+        result = subprocess.run(
+            ["rclone", "copy", str(note_path), onedrive_path],
+            capture_output=True,
+            timeout=120
+        )
+        if result.returncode == 0:
+            print(f"[i] 已同步到 OneDrive: {onedrive_path}{note_filename}")
+        else:
+            stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
+            print(f"[!] 同步失败: {stderr}", file=sys.stderr)
+    except FileNotFoundError:
+        print("[!] 未找到 rclone，跳过 OneDrive 同步", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print("[!] OneDrive 同步超时", file=sys.stderr)
+    except Exception as e:
+        print(f"[!] OneDrive 同步出错: {e}", file=sys.stderr)
+
+
 async def run_pipelines(
     urls: list[str],
     outdir: Path,
@@ -103,6 +162,7 @@ async def run_pipelines(
     keep_audio: bool = False,
     model: str | None = None,
     continue_on_error: bool = False,
+    note_mode: int | None = None,
 ) -> None:
     """串行处理多个视频链接。每个 job 完成后沿用 pipeline 的清理逻辑。"""
     total = len(urls)
@@ -127,6 +187,7 @@ async def run_pipelines(
                 keep_audio=keep_audio,
                 model=model,
                 video_info=video_info,
+                note_mode=note_mode,
             )
         except Exception as e:
             print(f"[!] 第 {idx} 个链接处理失败: {e}", file=sys.stderr)
@@ -231,6 +292,15 @@ def main():
         parts = [u.strip() for u in raw.split(";") if u and u.strip()]
         return parts
 
+    def _select_note_mode() -> int | None:
+        """交互式选择 Note 编辑模式。"""
+        from backend.note_generator import interactive_select_mode
+        try:
+            return interactive_select_mode()
+        except KeyboardInterrupt:
+            print("\n已取消模式选择")
+            return None
+
     urls: list[str] = []
     if not use_transcript_mode:
         if args.urls and args.url:
@@ -255,6 +325,15 @@ def main():
             print("[!] 未提供转录文本", file=sys.stderr)
             sys.exit(2)
 
+    # Select note mode
+    note_mode: int | None = None
+    if not use_transcript_mode:
+        try:
+            note_mode = _select_note_mode()
+        except KeyboardInterrupt:
+            print()
+            sys.exit(1)
+
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -277,6 +356,7 @@ def main():
                 keep_audio=args.keep_audio,
                 model=args.model,
                 continue_on_error=args.continue_on_error,
+                note_mode=note_mode,
             ))
     except KeyboardInterrupt:
         print("\n已取消")
