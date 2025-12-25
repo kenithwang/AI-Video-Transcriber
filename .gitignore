@@ -69,3 +69,7 @@ models/
 
 # Auth cookies
 *_cookies.txt
+
+# Channel monitor
+channels.yaml
+.processed_videos.json

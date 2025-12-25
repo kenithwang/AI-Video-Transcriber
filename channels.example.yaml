@@ -1,0 +1,48 @@
+# Channel Subscription Monitor Configuration
+# Copy this file to channels.yaml and customize for your needs.
+#
+# Usage:
+#   python cli.py --watch              # Check channels and process new videos
+#   python cli.py --watch --dry-run    # Preview what would be processed
+#   python cli.py --list-channels      # List configured channels
+
+settings:
+  # Default time window for checking new videos (hours)
+  # Videos published within this window will be processed
+  lookback_hours: 24
+
+  # Maximum age for processing "new" videos not in processed list (days)
+  # Videos older than this will be skipped even if not processed before
+  max_video_age_days: 7
+
+  # Delay between processing videos (seconds) - prevents rate limiting
+  processing_delay: 5
+
+  # Path to processed videos store (relative to this file or absolute)
+  processed_store: ".processed_videos.json"
+
+channels:
+  # YouTube channels - use /videos suffix for channel video list
+  # You can find channel URLs by going to a channel and clicking "Videos" tab
+
+  # Example: Using @handle format
+  - url: "https://www.youtube.com/@veritasium/videos"
+    name: "Veritasium"
+    enabled: false  # Set to true to enable
+
+  # Example: Using channel ID format
+  - url: "https://www.youtube.com/channel/UCuAXFkgsw1L7xaCfnd5JJOw/videos"
+    name: "Example Channel"
+    enabled: false
+
+  # Example: With custom lookback window
+  - url: "https://www.youtube.com/@lexfridman/videos"
+    name: "Lex Fridman"
+    enabled: false
+    lookback_hours: 48  # Override default, check last 48 hours
+
+  # Bilibili channels (UP主空间)
+  # Use space.bilibili.com/{uid}/video format
+  - url: "https://space.bilibili.com/123456789/video"
+    name: "某UP主"
+    enabled: false

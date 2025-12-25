@@ -232,6 +232,50 @@ async def run_transcript_pipeline(transcript_text: str, outdir: Path, *,
             print(f" - {item}")
 
 
+async def run_watch_mode(
+    config_path: Path,
+    outdir: Path,
+    lookback_override: int | None,
+    dry_run: bool,
+    keep_audio: bool,
+) -> None:
+    """Run channel monitoring and process new videos."""
+    from backend.channel_monitor import ChannelMonitor
+
+    monitor = ChannelMonitor(config_path)
+
+    print(f"[i] 频道配置: {config_path}")
+    print(f"[i] 已处理视频记录: {monitor._store_path}")
+    print(f"[i] 已记录 {monitor.store.count()} 个已处理视频")
+
+    if dry_run:
+        print("[i] 预览模式 - 不会实际处理视频")
+
+    async def on_update(evt: dict):
+        msg = evt.get("message", "")
+        prog = evt.get("progress", 0)
+        print(f"    [ {prog:>3}% ] {msg}")
+
+    result = await monitor.run_check(
+        outdir=outdir,
+        on_update=on_update,
+        lookback_override=lookback_override,
+        dry_run=dry_run,
+        keep_audio=keep_audio,
+    )
+
+    print("\n" + "=" * 40)
+    print("监控摘要")
+    print("=" * 40)
+    print(f"检查频道数: {result['channels_checked']}")
+    print(f"发现新视频: {result['new_videos_found']}")
+    print(f"成功处理数: {result['videos_processed']}")
+    if result['errors']:
+        print(f"错误数: {len(result['errors'])}")
+        for err in result['errors']:
+            print(f"  - {err}")
+
+
 def main():
     # 先尝试加载 .env
     _load_dotenv_if_present()
@@ -249,7 +293,79 @@ def main():
     parser.add_argument("--source-lang", help="指定转录原语言代码（例如 en、zh）")
     parser.add_argument("--model", help="统一覆盖 GEMINI_MODEL 的模型名称")
     parser.add_argument("--continue-on-error", action="store_true", help="批量模式下遇到错误继续处理下一个链接")
+    # Channel monitor options
+    parser.add_argument("--watch", "--monitor", action="store_true", dest="watch",
+                        help="监控配置的频道并转录新视频")
+    parser.add_argument("--config", type=Path, default=Path("channels.yaml"),
+                        help="频道配置文件路径（默认 channels.yaml）")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="预览模式：只显示会处理的视频，不实际执行")
+    parser.add_argument("--list-channels", action="store_true",
+                        help="列出配置的频道并退出")
+    parser.add_argument("--lookback", type=int, default=None,
+                        help="覆盖默认的时间窗口（小时）")
     args = parser.parse_args()
+
+    # Handle --list-channels
+    if args.list_channels:
+        try:
+            from backend.channel_monitor import ChannelMonitor
+            monitor = ChannelMonitor(args.config)
+            channels = monitor.get_channels()
+            if not channels:
+                print("[i] 没有配置任何频道")
+            else:
+                print(f"配置的频道 ({len(channels)} 个):\n")
+                NOTE_MODES = {
+                    1: "general_summary",
+                    2: "market_view",
+                    3: "project_kickoff",
+                    4: "client_call",
+                    5: "internal_meeting",
+                    6: "product_annoucement",
+                    7: "tech_view",
+                }
+                for i, ch in enumerate(channels, 1):
+                    status = "启用" if ch.enabled else "禁用"
+                    name = ch.name or ch.url
+                    print(f"  {i}. [{status}] {name}")
+                    print(f"     URL: {ch.url}")
+                    print(f"     回溯时间: {ch.lookback_hours} 小时")
+                    if ch.note_mode:
+                        mode_name = NOTE_MODES.get(ch.note_mode, "unknown")
+                        print(f"     Note模式: {ch.note_mode} ({mode_name})")
+                    print()
+        except FileNotFoundError as e:
+            print(f"[!] {e}", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)
+
+    # Handle --watch mode
+    if args.watch:
+        outdir = Path(args.outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        if args.model:
+            os.environ["GEMINI_MODEL"] = args.model
+
+        try:
+            asyncio.run(run_watch_mode(
+                config_path=args.config,
+                outdir=outdir,
+                lookback_override=args.lookback,
+                dry_run=args.dry_run,
+                keep_audio=args.keep_audio,
+            ))
+        except FileNotFoundError as e:
+            print(f"[!] {e}", file=sys.stderr)
+            sys.exit(2)
+        except KeyboardInterrupt:
+            print("\n已取消")
+            sys.exit(130)
+        except Exception as e:
+            print(f"[!] 监控失败: {e}", file=sys.stderr)
+            sys.exit(3)
+        sys.exit(0)
 
     transcript_text: str | None = None
     if args.transcript_file:
