@@ -80,6 +80,7 @@ class VideoInfo:
     upload_date: Optional[datetime]
     duration: int
     note_mode: Optional[int] = None  # Note generation mode from channel config
+    live_status: Optional[str] = None  # is_upcoming, is_live, was_live, or None
 
 
 class ChannelMonitor:
@@ -295,6 +296,7 @@ class ChannelMonitor:
                     or "",
                     upload_date=upload_date,
                     duration=entry.get("duration") or 0,
+                    live_status=entry.get("live_status"),
                 )
             )
 
@@ -319,8 +321,9 @@ class ChannelMonitor:
 
         Logic:
         1. Video ID not in processed store
-        2. Published within lookback_hours OR never processed before
-        3. Not older than max_video_age_days
+        2. Skip upcoming or currently live streams (only process was_live)
+        3. Published within lookback_hours OR never processed before
+        4. Not older than max_video_age_days
         """
         now = datetime.now()
         lookback_cutoff = now - timedelta(hours=lookback_hours)
@@ -330,6 +333,10 @@ class ChannelMonitor:
         for video in videos:
             # Skip if already processed
             if self.store.is_processed(video.video_id):
+                continue
+
+            # Skip upcoming or currently live streams (can't transcribe yet)
+            if video.live_status in ("is_upcoming", "is_live"):
                 continue
 
             # Check age constraints
