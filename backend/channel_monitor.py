@@ -150,7 +150,7 @@ class ChannelMonitor:
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.3,
-                    max_output_tokens=500,
+                    max_output_tokens=30000,
                 ),
             )
             # Extract text from response
@@ -482,7 +482,7 @@ class ChannelMonitor:
                     url=video.url,
                     timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     summary=brief_summary,
-                    note_file=str(outdir / note_file) if note_file else "",
+                    note_file=str((outdir / note_file).resolve()) if note_file else "",
                 ))
 
                 # Mark as processed
