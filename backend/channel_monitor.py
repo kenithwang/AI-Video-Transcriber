@@ -39,6 +39,7 @@ BRIEF_SUMMARY_PROMPT = """请根据以下视频转录内容，生成一个简短
 @dataclass
 class VideoDigestEntry:
     """Entry for video digest JSON output."""
+    video_id: str
     title: str
     channel: str
     url: str
@@ -50,6 +51,7 @@ class VideoDigestEntry:
 @dataclass
 class VideoDigestFailure:
     """Failed video entry for digest."""
+    video_id: str
     title: str
     channel: str
     url: str
@@ -167,14 +169,65 @@ class ChannelMonitor:
             print(f"    [!] Brief summary generation failed: {e}")
             return ""
 
+    def _load_existing_digest(self) -> dict:
+        """Load existing digest file or return empty structure."""
+        if self._digest_path.exists():
+            try:
+                with open(self._digest_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    # Ensure expected structure (dict-based)
+                    if "processed" not in data or not isinstance(data["processed"], dict):
+                        data["processed"] = {}
+                    if "failed" not in data or not isinstance(data["failed"], dict):
+                        data["failed"] = {}
+                    return data
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"[!] Warning: Failed to load existing digest: {e}")
+        return {"processed": {}, "failed": {}}
+
+    def _cleanup_old_digest_entries(self, data: dict, max_age_days: int = 3) -> int:
+        """Remove digest entries older than max_age_days. Returns count removed."""
+        cutoff = datetime.now() - timedelta(days=max_age_days)
+        removed = 0
+
+        for section in ["processed", "failed"]:
+            to_remove = []
+            for video_id, entry in data.get(section, {}).items():
+                timestamp_str = entry.get("timestamp", "")
+                try:
+                    # Try parsing the timestamp
+                    dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                    if dt < cutoff:
+                        to_remove.append(video_id)
+                except ValueError:
+                    pass
+
+            for video_id in to_remove:
+                del data[section][video_id]
+                removed += 1
+
+        return removed
+
     def _save_digest(self, outdir: Path) -> None:
-        """Save video digest to JSON file."""
-        digest = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "generated_at": datetime.now().isoformat(),
-            "processed": [asdict(e) for e in self._digest_processed],
-            "failed": [asdict(e) for e in self._digest_failed],
-        }
+        """Save video digest to JSON file (append mode with cleanup)."""
+        # Load existing digest
+        digest = self._load_existing_digest()
+
+        # Append new processed entries (keyed by video_id)
+        for entry in self._digest_processed:
+            digest["processed"][entry.video_id] = asdict(entry)
+
+        # Append new failed entries (keyed by video_id)
+        for entry in self._digest_failed:
+            digest["failed"][entry.video_id] = asdict(entry)
+
+        # Cleanup entries older than 3 days
+        removed = self._cleanup_old_digest_entries(digest, max_age_days=3)
+        if removed > 0:
+            print(f"[i] Cleaned up {removed} old digest entries (>3 days)")
+
+        # Update metadata
+        digest["updated_at"] = datetime.now().isoformat()
 
         try:
             with open(self._digest_path, "w", encoding="utf-8") as f:
@@ -477,6 +530,7 @@ class ChannelMonitor:
 
                 # Add to digest
                 self._digest_processed.append(VideoDigestEntry(
+                    video_id=video.video_id,
                     title=video.title,
                     channel=video.channel_name,
                     url=video.url,
@@ -503,6 +557,7 @@ class ChannelMonitor:
 
                 # Add to digest failures
                 self._digest_failed.append(VideoDigestFailure(
+                    video_id=video.video_id,
                     title=video.title,
                     channel=video.channel_name,
                     url=video.url,

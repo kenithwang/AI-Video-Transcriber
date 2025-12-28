@@ -73,8 +73,31 @@ class ProcessedStore:
             "channel_name": channel_name,
             "transcript_file": transcript_file,
             "processed_at": datetime.now().isoformat(),
+            "sent": False,
         }
         self.save()
+
+    def get_unsent_videos(self) -> dict[str, dict]:
+        """Get all videos that have been processed but not yet sent via email."""
+        return {
+            video_id: info
+            for video_id, info in self._data["videos"].items()
+            if not info.get("sent", False)
+        }
+
+    def mark_sent(self, video_id: str) -> None:
+        """Mark a video as sent and save immediately."""
+        if video_id in self._data["videos"]:
+            self._data["videos"][video_id]["sent"] = True
+            self.save()
+
+    def mark_sent_batch(self, video_ids: list[str]) -> None:
+        """Mark multiple videos as sent and save once."""
+        for video_id in video_ids:
+            if video_id in self._data["videos"]:
+                self._data["videos"][video_id]["sent"] = True
+        if video_ids:
+            self.save()
 
     def get_all_video_ids(self) -> set[str]:
         """Get all processed video IDs."""
