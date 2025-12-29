@@ -1,0 +1,2 @@
+# AI Video Transcriber - 每天北京时间 07:00 和 14:00 (UTC 23:00 和 06:00) 检查新视频并转录
+0 6,23 * * * cd /home/ken-wang/AI-Video-Transcriber && .venv/bin/python cli.py --watch >> temp/watch.log 2>&1
