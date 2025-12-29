@@ -9,14 +9,19 @@ import json
 import os
 import re
 import shutil
-from dataclasses import dataclass, field, asdict
+import time
+from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
+import requests
 import yaml
 import yt_dlp
+
+# B站 API 请求间隔（秒），避免触发风控
+BILIBILI_API_DELAY = 0.3
 
 from .processed_store import ProcessedStore
 
@@ -208,7 +213,7 @@ class ChannelMonitor:
 
         return removed
 
-    def _save_digest(self, outdir: Path) -> None:
+    def _save_digest(self) -> None:
         """Save video digest to JSON file (append mode with cleanup)."""
         # Load existing digest
         digest = self._load_existing_digest()
@@ -364,6 +369,49 @@ class ChannelMonitor:
         except ValueError:
             return None
 
+    def _check_bilibili_video_type(self, bvid: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Check Bilibili video type via API.
+
+        Returns:
+            Tuple of (video_type, title):
+            - video_type: "normal", "cooperation", "paid", "error", or None
+            - title: Video title if available
+        """
+        url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+        try:
+            resp = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10,
+            )
+            data = resp.json()
+
+            if data.get("code") == -404:
+                return "paid", None  # 充电专属或已删除
+
+            if data.get("code") == -352:
+                # 风控，返回 error 让调用者决定如何处理
+                return "error", None
+
+            if data.get("code") != 0:
+                # 其他 API 错误
+                return "error", None
+
+            video_data = data.get("data", {})
+            title = video_data.get("title")
+            rights = video_data.get("rights", {})
+
+            if rights.get("is_cooperation") == 1:
+                return "cooperation", title
+
+            return "normal", title
+
+        except requests.exceptions.Timeout:
+            return "error", None
+        except Exception:
+            return "error", None
+
     def filter_new_videos(
         self,
         videos: list[VideoInfo],
@@ -375,11 +423,13 @@ class ChannelMonitor:
         Logic:
         1. Video ID not in processed store
         2. Skip upcoming or currently live streams (only process was_live)
-        3. Published within lookback_hours OR never processed before
-        4. Not older than max_video_age_days
+        3. Not older than max_video_age_days
+        4. For Bilibili: skip paid (充电专属) and cooperation (合作) videos
+
+        Note: lookback_hours is passed for compatibility but filtering is
+        primarily based on max_video_age_days to catch any missed videos.
         """
         now = datetime.now()
-        lookback_cutoff = now - timedelta(hours=lookback_hours)
         max_age_cutoff = now - timedelta(days=self.max_video_age_days)
 
         new_videos = []
@@ -399,6 +449,32 @@ class ChannelMonitor:
                     continue
                 # Prioritize recent videos but include older unprocessed ones
                 # (up to max_age_days)
+
+            # Filter Bilibili paid/cooperation videos
+            if video.video_id.startswith("BV"):
+                video_type, api_title = self._check_bilibili_video_type(video.video_id)
+                display_title = api_title or video.title or video.video_id
+
+                if video_type == "paid":
+                    print(f"      [skip] 充电专属: {display_title}")
+                    time.sleep(BILIBILI_API_DELAY)
+                    continue
+                if video_type == "cooperation":
+                    print(f"      [skip] 合作视频: {display_title}")
+                    time.sleep(BILIBILI_API_DELAY)
+                    continue
+                if video_type == "error":
+                    # API 错误时跳过，避免处理可能无法访问的视频
+                    print(f"      [skip] API错误: {display_title}")
+                    time.sleep(BILIBILI_API_DELAY)
+                    continue
+
+                # Update title if we got it from API
+                if api_title and video.title in ("Unknown", None, ""):
+                    video.title = api_title
+
+                # 添加请求间隔，避免触发风控
+                time.sleep(BILIBILI_API_DELAY)
 
             new_videos.append(video)
 
@@ -425,7 +501,6 @@ class ChannelMonitor:
         """
         import asyncio
         import subprocess
-        import traceback
 
         from .pipeline import process_video
         from .note_generator import NoteGenerator, generate_note_filename
@@ -652,6 +727,10 @@ class ChannelMonitor:
 
         if not all_new_videos:
             print("\n[i] No new videos to process")
+            # Still cleanup old entries even when no new videos
+            removed = self.store.cleanup_old(max_age_days=30)
+            if removed > 0:
+                print(f"[i] Cleaned up {removed} old processed entries (>30 days)")
             return summary
 
         if dry_run:
@@ -672,7 +751,12 @@ class ChannelMonitor:
 
         # Save video digest for news_summary integration
         if self._digest_processed or self._digest_failed:
-            self._save_digest(outdir)
+            self._save_digest()
+
+        # Cleanup old processed entries (older than 30 days)
+        removed = self.store.cleanup_old(max_age_days=30)
+        if removed > 0:
+            print(f"[i] Cleaned up {removed} old processed entries (>30 days)")
 
         return summary
 
