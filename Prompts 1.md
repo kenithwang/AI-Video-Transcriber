@@ -235,7 +235,7 @@ The output must be primarily in **Simplified Chinese**, utilizing Markdown forma
 
 ---
 
-### 5. 逐字稿优化 (Refined Transcript)
+### 5. 完整逐字稿 (Detailed Transcript)
 (Based on the raw transcript. Organize it by speaker. Clean up stuttering/filler words but **retain 100% of the information content**.)
 * **Language:** Simplified Chinese (translate English parts to Chinese contextually where appropriate for flow, or keep English terms if they are specific terminology).
 * **Format:**
@@ -282,7 +282,7 @@ Your output must strictly adhere to Markdown formatting.
     *   [子关键点1.1]
 *   [关键点2]
 
-## Discussion (讨论内容)
+### 5. 完整逐字稿 (Detailed Transcript)
 请根据下面提供的会议【逐字稿】进行处理：
 1.  **语言处理**: 如果原始对话主要是**英文**，则保留英文。如果原始对话主要是**简体中文**或**繁体中文**，则统一转换为**简体中文**。如果是其他语言，则翻译为**简体中文**。
 2.  **发言人识别与格式化**: 分析逐字稿内容，识别发言人。如果能明确识别发言人姓名（通过自我介绍或他人介绍），请使用其【真实姓名】（例如："张三:" 或 "John Doe:")作为标记。如果无法确切知道姓名，则使用通用标记（例如：说话人1:, 说话人2:, 说话人3:）。
@@ -344,7 +344,7 @@ The output must strictly adhere to Markdown formatting.
 
 ---
 
-## Transcript (完整逐字稿)
+### 6. 完整逐字稿 (Detailed Transcript)
 **CRITICAL INSTRUCTION: DO NOT TRUNCATE. YOU MUST OUTPUT THE TRANSCRIPT UNTIL THE VERY END.**
 (严禁截断。必须完整输出逐字稿直到最后一句话，不得因为长度原因省略结尾。)
 
