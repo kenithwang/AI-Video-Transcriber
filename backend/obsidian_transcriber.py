@@ -54,13 +54,17 @@ class ObsidianTranscriber:
 
     思路：
     - 使用 File API 上传音频（支持最大 2GB / 8.4 小时）；
-    - 如果音频超过 8 小时，才进行切片处理；
+    - 如果音频超过可靠转录时长，进行切片处理以避免截断；
     - 通过 google-generativeai 调用模型进行转写；
     - 仅返回纯文本；最后拼接为一份完整的逐字稿。
     """
 
     # File API 支持的最大音频时长（秒）：8.4 小时 = 30240 秒，保守取 8 小时
     MAX_AUDIO_DURATION = 8 * 60 * 60  # 28800 秒
+
+    # 模型可靠转录的最大时长（秒）：Gemini Flash 对超过 20 分钟的音频容易截断
+    # 设为 20 分钟以确保完整转录
+    RELIABLE_TRANSCRIBE_DURATION = 20 * 60  # 1200 秒
 
     def __init__(self, segment_seconds: int = 28800, parallelism: Optional[int] = None):
         api_key = os.getenv('GEMINI_API_KEY')
@@ -166,7 +170,8 @@ class ObsidianTranscriber:
         silence_points = sorted(set(silence_points))
 
         # 根据目标分割点寻找±5s 内最近静音
-        MAX = self.segment_seconds
+        # 使用 RELIABLE_TRANSCRIBE_DURATION 作为切片目标，确保每段都能完整转录
+        MAX = min(self.segment_seconds, self.RELIABLE_TRANSCRIBE_DURATION)
         SEARCH = 5.0
         MIN_SEG = 1.0
         cuts: List[Tuple[float, float]] = []
@@ -343,13 +348,15 @@ class ObsidianTranscriber:
         dur = self._ffprobe_duration(p)
         logger.info(f"[obsidian] 文件: {p.name}, 大小: {self._fmt_size(size)}, 时长: {self._fmt_duration(dur)}, 模型: {self.model_name}")
 
-        # 如果音频时长在限制内，直接上传整个文件，不切片
-        if dur <= self.MAX_AUDIO_DURATION and dur <= self.segment_seconds:
-            logger.info(f"[obsidian] 音频时长 {self._fmt_duration(dur)} <= 8小时，直接上传不切片")
+        # 如果音频时长在可靠转录范围内，直接上传整个文件，不切片
+        # 注意：即使 File API 支持 8 小时，Gemini Flash 对长音频容易截断，所以使用更保守的阈值
+        if dur <= self.RELIABLE_TRANSCRIBE_DURATION:
+            logger.info(f"[obsidian] 音频时长 {self._fmt_duration(dur)} <= 20分钟，直接上传不切片")
             workdir = Path(tempfile.mkdtemp(prefix='obs_work_', dir=str(p.parent)))
             # 创建单个 chunk 代表整个文件
             chunks = [AudioChunk(p, 0.0, dur)]
         else:
+            logger.info(f"[obsidian] 音频时长 {self._fmt_duration(dur)} > 20分钟，将按约20分钟切片以确保完整转录")
             chunks, workdir = self._split_audio(p)
             logger.info(f"[obsidian] 切片完成，共 {len(chunks)} 段，准备并行转写（并行度={self.parallelism}）")
 
