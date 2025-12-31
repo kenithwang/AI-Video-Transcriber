@@ -57,14 +57,10 @@ class VideoProcessor:
         if js_interpreter:
             self.ydl_opts['js_interpreter'] = js_interpreter
             logger.debug(f"已配置 yt-dlp 使用 JS 解释器: {js_interpreter}")
-        
-        cookie_file = os.getenv("YDL_COOKIEFILE")
-        if cookie_file:
-            cookie_path = Path(cookie_file).expanduser()
-            if cookie_path.exists():
-                self.ydl_opts['cookiefile'] = str(cookie_path)
-            else:
-                logger.warning("YDL_COOKIEFILE 指定的文件不存在: %s", cookie_path)
+
+        # 注意：不在这里设置默认 cookies，而是在 download_and_convert 中根据 URL 选择
+        # YDL_COOKIEFILE 用于 YouTube，BILIBILI_COOKIE_FILE 用于 Bilibili
+
         extractor_args_json = os.getenv("YDL_EXTRACTOR_ARGS_JSON")
         if extractor_args_json:
             try:
@@ -135,6 +131,17 @@ class VideoProcessor:
                     else:
                         logger.warning(
                             "BILIBILI_COOKIE_FILE 指定的文件不存在: %s", cookie_path
+                        )
+            elif hostname.endswith("youtube.com") or hostname.endswith("youtu.be"):
+                # YouTube 使用专门的 cookies 文件
+                cookie_file = os.getenv('YDL_COOKIEFILE')
+                if cookie_file:
+                    cookie_path = Path(cookie_file).expanduser()
+                    if cookie_path.exists():
+                        ydl_opts['cookiefile'] = str(cookie_path)
+                    else:
+                        logger.warning(
+                            "YDL_COOKIEFILE 指定的文件不存在: %s", cookie_path
                         )
 
             logger.info(f"开始下载视频: {url}")
