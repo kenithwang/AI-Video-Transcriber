@@ -136,6 +136,7 @@ async def generate_note_from_transcript(
     # Sync to OneDrive
     onedrive_path = "Obsidian Vault:/应用/remotely-save/Obsidian Vault/AI Transcribe/Transcript/"
     print(f"[i] 正在同步到 OneDrive...")
+    sync_success = False
     try:
         result = subprocess.run(
             ["rclone", "copy", str(note_path), onedrive_path],
@@ -144,6 +145,7 @@ async def generate_note_from_transcript(
         )
         if result.returncode == 0:
             print(f"[i] 已同步到 OneDrive: {onedrive_path}{note_filename}")
+            sync_success = True
         else:
             stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
             print(f"[!] 同步失败: {stderr}", file=sys.stderr)
@@ -153,6 +155,19 @@ async def generate_note_from_transcript(
         print("[!] OneDrive 同步超时", file=sys.stderr)
     except Exception as e:
         print(f"[!] OneDrive 同步出错: {e}", file=sys.stderr)
+
+    # 同步成功后清理本地文件
+    if sync_success:
+        try:
+            note_path.unlink(missing_ok=True)
+            print(f"[i] 已删除本地 Note: {note_filename}")
+        except Exception as e:
+            print(f"[!] 删除 Note 失败: {e}", file=sys.stderr)
+        try:
+            transcript_path.unlink(missing_ok=True)
+            print(f"[i] 已删除本地 Transcript: {transcript_path.name}")
+        except Exception as e:
+            print(f"[!] 删除 Transcript 失败: {e}", file=sys.stderr)
 
 
 async def run_pipelines(
