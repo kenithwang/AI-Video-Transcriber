@@ -63,8 +63,11 @@ uv run python cli.py --transcript-file path/to/transcript.md
 | `GEMINI_MODEL` | 使用的模型（默认：`gemini-3-pro-preview`）。 |
 | `SEGMENT_SECONDS` | 音频切片最大时长，单位秒（默认：`28800` = 8 小时）。 |
 | `TRANSCRIBE_CONCURRENCY` | 并行转写线程数（默认自动）。 |
-| `BILIBILI_COOKIE_FILE` | Netscape 格式 Cookie，用于下载 B 站会员视频。 |
+| `YDL_COOKIEFILE` | Netscape 格式 Cookie，用于 YouTube（自动识别 youtube.com/youtu.be）。 |
+| `BILIBILI_COOKIE_FILE` | Netscape 格式 Cookie，用于 B 站（自动识别 bilibili.com）。 |
 | `YDL_USER_AGENT` | 自定义 UA，避免被屏蔽。 |
+
+> **说明：** 系统会根据视频 URL 自动选择正确的 Cookie 文件。YouTube 视频使用 `YDL_COOKIEFILE`，B 站视频使用 `BILIBILI_COOKIE_FILE`。
 
 ## 📦 输出文件
 
