@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 import logging
 
@@ -567,4 +568,18 @@ def perform_storage_check(url: str, outdir: Path) -> dict | None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        print(f"[SUCCESS] video_transcriber completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    except SystemExit as e:
+        exit_code = e.code if e.code is not None else 0
+        if exit_code == 0:
+            print(f"[SUCCESS] video_transcriber completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        elif exit_code == 130:
+            print("[INFO] video_transcriber: interrupted by user")
+        else:
+            print(f"[FAILED] video_transcriber: exited with code {exit_code}")
+        sys.exit(exit_code)
+    except Exception as e:
+        print(f"[FAILED] video_transcriber: {e}")
+        sys.exit(1)
