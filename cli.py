@@ -3,7 +3,7 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 
@@ -34,6 +34,63 @@ def ensure_ffmpeg():
 def print_env_warnings():
     if not os.getenv("GEMINI_API_KEY"):
         print("[!] 未设置 GEMINI_API_KEY：无法进行云端转写。")
+
+
+# Watch mode log helpers
+WATCH_LOG_PATH = Path("temp/watch.log")
+
+
+def cleanup_old_watch_logs(log_path: Path, days: int = 3) -> None:
+    """Remove log entries older than specified days."""
+    if not log_path.exists():
+        return
+
+    cutoff = datetime.now() - timedelta(days=days)
+    lines_to_keep = []
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                # Parse date from line start: {YYYY-MM-DD HH:MM:SS}
+                try:
+                    date_str = line[:19]  # "YYYY-MM-DD HH:MM:SS"
+                    line_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    if line_date >= cutoff:
+                        lines_to_keep.append(line)
+                except ValueError:
+                    # Keep lines that can't be parsed (shouldn't happen)
+                    lines_to_keep.append(line)
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            for line in lines_to_keep:
+                f.write(line + "\n")
+    except Exception:
+        pass  # Silently ignore cleanup errors
+
+
+def write_watch_log(
+    found: int,
+    processed: int,
+    sent: int,
+    failed: int,
+    error: str | None = None,
+) -> None:
+    """Write a single summary line to watch log."""
+    WATCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    cleanup_old_watch_logs(WATCH_LOG_PATH, days=3)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if error:
+        log_line = f"{timestamp} [FAILED] Watch 异常退出: {error}"
+    else:
+        log_line = f"{timestamp} [SUCCESS] 发现 {found} 个新视频, 处理 {processed} 个, 发送 {sent} 个, 失败 {failed} 个"
+
+    with open(WATCH_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(log_line + "\n")
 
 
 def preflight_checks() -> list[str]:
@@ -254,8 +311,12 @@ async def run_watch_mode(
     lookback_override: int | None,
     dry_run: bool,
     keep_audio: bool,
-) -> None:
-    """Run channel monitoring and process new videos."""
+) -> dict:
+    """Run channel monitoring and process new videos.
+
+    Returns:
+        Dict with keys: found, processed, sent, failed
+    """
     from backend.channel_monitor import ChannelMonitor
 
     monitor = ChannelMonitor(config_path)
@@ -290,6 +351,19 @@ async def run_watch_mode(
         print(f"错误数: {len(result['errors'])}")
         for err in result['errors']:
             print(f"  - {err}")
+
+    # Return statistics for watch log
+    found = result['new_videos_found']
+    processed = result['videos_processed']
+    failed = found - processed
+    sent = processed  # Assumes all processed videos are synced to OneDrive
+
+    return {
+        "found": found,
+        "processed": processed,
+        "sent": sent,
+        "failed": failed,
+    }
 
 
 def main():
@@ -365,20 +439,30 @@ def main():
             os.environ["GEMINI_MODEL"] = args.model
 
         try:
-            asyncio.run(run_watch_mode(
+            stats = asyncio.run(run_watch_mode(
                 config_path=args.config,
                 outdir=outdir,
                 lookback_override=args.lookback,
                 dry_run=args.dry_run,
                 keep_audio=args.keep_audio,
             ))
+            # Write success log (skip for dry-run mode)
+            if not args.dry_run:
+                write_watch_log(
+                    found=stats["found"],
+                    processed=stats["processed"],
+                    sent=stats["sent"],
+                    failed=stats["failed"],
+                )
         except FileNotFoundError as e:
+            write_watch_log(0, 0, 0, 0, error=str(e))
             print(f"[!] {e}", file=sys.stderr)
             sys.exit(2)
         except KeyboardInterrupt:
             print("\n已取消")
             sys.exit(130)
         except Exception as e:
+            write_watch_log(0, 0, 0, 0, error=str(e))
             print(f"[!] 监控失败: {e}", file=sys.stderr)
             sys.exit(3)
         sys.exit(0)
