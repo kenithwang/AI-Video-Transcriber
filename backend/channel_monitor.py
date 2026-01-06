@@ -568,6 +568,7 @@ class ChannelMonitor:
 
                         # Sync to OneDrive
                         onedrive_path = "Obsidian Vault:/应用/remotely-save/Obsidian Vault/AI Transcribe/Transcript/"
+                        sync_success = False
                         try:
                             sync_result = subprocess.run(
                                 ["rclone", "copy", str(note_path), onedrive_path],
@@ -576,12 +577,27 @@ class ChannelMonitor:
                             )
                             if sync_result.returncode == 0:
                                 print(f"    [OK] Synced to OneDrive")
+                                sync_success = True
                             else:
                                 print(f"    [!] OneDrive sync failed")
                         except FileNotFoundError:
                             pass  # rclone not installed
                         except subprocess.TimeoutExpired:
                             print(f"    [!] OneDrive sync timeout")
+
+                        # Cleanup local files after successful sync
+                        if sync_success:
+                            try:
+                                note_path.unlink(missing_ok=True)
+                                print(f"    [OK] Deleted local note: {note_filename}")
+                            except Exception as e:
+                                print(f"    [!] Failed to delete note: {e}")
+
+                            try:
+                                transcript_path.unlink(missing_ok=True)
+                                print(f"    [OK] Deleted local transcript: {transcript_file}")
+                            except Exception as e:
+                                print(f"    [!] Failed to delete transcript: {e}")
 
                     except Exception as e:
                         error_msg = f"{type(e).__name__}: {e}"
