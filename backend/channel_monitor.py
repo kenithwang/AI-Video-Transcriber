@@ -585,19 +585,11 @@ class ChannelMonitor:
                         except subprocess.TimeoutExpired:
                             print(f"    [!] OneDrive sync timeout")
 
-                        # Cleanup local files after successful sync
+                        # Local files kept for news_summary to send as email attachments
+                        # news_summary will cleanup these files after sending
+                        # (see news_summary/video_tracker.py:cleanup_sent_notes)
                         if sync_success:
-                            try:
-                                note_path.unlink(missing_ok=True)
-                                print(f"    [OK] Deleted local note: {note_filename}")
-                            except Exception as e:
-                                print(f"    [!] Failed to delete note: {e}")
-
-                            try:
-                                transcript_path.unlink(missing_ok=True)
-                                print(f"    [OK] Deleted local transcript: {transcript_file}")
-                            except Exception as e:
-                                print(f"    [!] Failed to delete transcript: {e}")
+                            print(f"    [OK] Synced, local files retained for email delivery")
 
                     except Exception as e:
                         error_msg = f"{type(e).__name__}: {e}"
