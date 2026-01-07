@@ -131,7 +131,7 @@ class NoteGenerator:
         return prompt
 
     def _extract_raw_transcript(self, transcript: str) -> str:
-        """Extract raw transcript content from the input (remove metadata)."""
+        """Extract raw transcript content from the input (remove all metadata)."""
         import re
 
         # Try to find "## Transcription Content" section
@@ -150,8 +150,13 @@ class NoteGenerator:
                 remaining = re.sub(r'\n*source:\s*.*$', '', remaining, flags=re.IGNORECASE)
                 return remaining.strip()
 
-        # Last resort: return as-is
-        return transcript
+        # Last resort: return as-is (but try to remove common metadata headers)
+        content = transcript
+        # Remove "# Video Transcription" and similar headers
+        content = re.sub(r'^#\s+Video Transcription.*?\n', '', content, flags=re.MULTILINE)
+        content = re.sub(r'^\*\*Detected Language:.*?\n', '', content, flags=re.MULTILINE)
+        content = re.sub(r'^\*\*Model:.*?\n', '', content, flags=re.MULTILINE)
+        return content.strip()
 
     def _format_transcript(self, raw_transcript: str) -> str:
         """Stage 2: Use AI to format and clean up the transcript."""
