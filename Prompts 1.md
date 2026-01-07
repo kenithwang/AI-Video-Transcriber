@@ -9,7 +9,6 @@ You are an expert **Content Analyst**. Your task is to generate a **clear, struc
 1.  **Clarity First:** Extract and present the key points, main arguments, and supporting logic in a clear and organized manner.
 2.  **Logical Structure:** For each main viewpoint, explain the reasoning and evidence/examples used to support it.
 3.  **Language Rule:** Write the narrative in **Simplified Chinese**, but keep **Proper Nouns, Technical Terms, and Names** in **English**.
-4.  **NO SUMMARIZATION IN TRANSCRIPT:** In the final section, you must output the **FULL, VERBATIM** transcript. Do not summarize, truncate, or omit any part.
 
 ---
 
@@ -54,25 +53,6 @@ You are an expert **Content Analyst**. Your task is to generate a **clear, struc
 ### 5. 总结与启示 (Conclusion & Implications)
 (总结整体内容的意义，以及对读者/听众的潜在启示或行动建议。)
 
----
-
-### 6. 完整逐字稿 (Detailed Transcript)
-**CRITICAL INSTRUCTION: VERBATIM OUTPUT REQUIRED.**
-**STRICTLY FORBIDDEN:** Do not summarize, shorten, or omit any part of the text.
-
-* **Rule 1 (Completeness):** You must output every single sentence spoken. Do not use phrases like "(content omitted)", "(see above)", or "(transcript truncated)".
-* **Rule 2 (Format):**
-    **[Speaker Name]:**
-    [Full Content]
-* **Rule 3 (Language Handling):**
-    * **Mandarin & English:** Keep exactly as spoken. **Do NOT translate.**
-    * **Other Languages (Japanese/Korean, etc.):** You **MUST** provide a **Paragraph-by-Paragraph Bilingual Version**:
-        * Original Text
-        * **(Bold Chinese Translation)**
-
-*(Self-Correction Mechanism: Before outputting the transcript, ask yourself: "Did I cut off the ending?" If yes, go back and include the full text.)*
-
-{transcript_placeholder}
 ```
 
 ---
@@ -86,7 +66,6 @@ You are an expert **Financial Research Assistant**. Your task is to generate a *
 1.  **Objectivity First:** Do not impose investment recommendations. Accurately reflect *what the speaker said*.
 2.  **Data Precision:** Capture all financial metrics accurately.
 3.  **Language Rule:** Write the narrative in **Simplified Chinese**, but keep **Tickers, Company Names, and Technical Terms** in **English**.
-4.  **NO SUMMARIZATION IN TRANSCRIPT:** In Section 5, you must output the **FULL, VERBATIM** content. Do not summarize, truncate, or omit the Q&A session.
 
 ---
 
@@ -110,25 +89,6 @@ You are an expert **Financial Research Assistant**. Your task is to generate a *
 ### 4. 市场观察与宏观背景 (Market Observations)
 (General market comments.)
 
----
-
-### 5. 完整逐字稿 (Detailed Transcript)
-**CRITICAL INSTRUCTION: VERBATIM OUTPUT REQUIRED.**
-**STRICTLY FORBIDDEN:** Do not summarize, shorten, or omit any part of the text, **especially the Q&A (Question and Answer) session**.
-
-* **Rule 1 (Completeness):** You must output every single sentence spoken. Do not use phrases like "(Q&A session omitted)", "(Discussion followed)", or "(See rest of text)". **If the input text includes a Q&A session, transcribe it fully.**
-* **Rule 2 (Format):**
-    **[Speaker Name]:**
-    [Full Content]
-* **Rule 3 (Language Handling):**
-    * **Mandarin & English:** Keep exactly as spoken. **Do NOT translate.**
-    * **Other Languages (Japanese/Korean, etc.):** You **MUST** provide a **Paragraph-by-Paragraph Bilingual Version**:
-        * Original Text
-        * **(Bold Chinese Translation)**
-
-*(Self-Correction Mechanism: Before outputting Section 5, ask yourself: "Did I cut off the ending?" If yes, go back and include the full text.)*
-
-{transcript_placeholder}
 ```
 
 ---
@@ -181,16 +141,6 @@ You are an expert **Senior Project Manager**. Your task is to generate a **struc
 * **[Owner]**: [Specific Task] (Due: [Date])
 * **[Owner]**: [Specific Task] (Due: [Date])
 
----
-
-### 6. 完整逐字稿 (Detailed Transcript)
-**CRITICAL INSTRUCTION: DO NOT TRUNCATE.**
-(Output the full transcript. Clean up filler words like "um/ah", but retain 100% of the content.)
-
-* **Format:**
-    **[Speaker Name]:** [Content]
-
-{transcript_placeholder}
 ```
 
 ---
@@ -233,15 +183,6 @@ The output must be primarily in **Simplified Chinese**, utilizing Markdown forma
 ### 4. 关键风险与洞察 (Key Risks & Insights)
 (Highlight specific insights regarding market trends or operational risks mentioned, e.g., Singapore labor law risks, "Fake Online" models in India, etc.)
 
----
-
-### 5. 完整逐字稿 (Detailed Transcript)
-(Based on the raw transcript. Organize it by speaker. Clean up stuttering/filler words but **retain 100% of the information content**.)
-* **Language:** Simplified Chinese (translate English parts to Chinese contextually where appropriate for flow, or keep English terms if they are specific terminology).
-* **Format:**
-    **[Speaker Name]:** [Content]
-
-{transcript_placeholder}
 ```
 
 ---
@@ -282,14 +223,6 @@ Your output must strictly adhere to Markdown formatting.
     *   [子关键点1.1]
 *   [关键点2]
 
-### 5. 完整逐字稿 (Detailed Transcript)
-请根据下面提供的会议【逐字稿】进行处理：
-1.  **语言处理**: 如果原始对话主要是**英文**，则保留英文。如果原始对话主要是**简体中文**或**繁体中文**，则统一转换为**简体中文**。如果是其他语言，则翻译为**简体中文**。
-2.  **发言人识别与格式化**: 分析逐字稿内容，识别发言人。如果能明确识别发言人姓名（通过自我介绍或他人介绍），请使用其【真实姓名】（例如："张三:" 或 "John Doe:")作为标记。如果无法确切知道姓名，则使用通用标记（例如：说话人1:, 说话人2:, 说话人3:）。
-3.  **语义分段**: 将对话内容严格按照语义变化进行分段。**当说话人改变时，或者当讨论的主题发生显著变化时，开始新的段落。** 避免输出大块连续文本，通过清晰的段落划分提高可读性。
-4.  **内容呈现**: 将处理后的逐字稿完整粘贴在此处。
-
-{transcript_placeholder}
 ```
 
 ---
@@ -342,24 +275,6 @@ The output must strictly adhere to Markdown formatting.
 (发布会后是否有这就需要配合的行动？如：市场部发通稿、销售部更新话术等。)
 * **[部门/负责人]**: [具体任务]
 
----
-
-### 6. 完整逐字稿 (Detailed Transcript)
-**CRITICAL INSTRUCTION: DO NOT TRUNCATE. YOU MUST OUTPUT THE TRANSCRIPT UNTIL THE VERY END.**
-(严禁截断。必须完整输出逐字稿直到最后一句话，不得因为长度原因省略结尾。)
-
-请根据下面提供的【原始逐字稿】进行处理：
-1.  **语言处理**:
-    * 如果原始对话主要是**英文**，保留英文。
-    * 如果原始对话主要是**中文**（无论繁简），统一转换为**简体中文**。
-2.  **发言人识别**:
-    * 必须识别具体人名（如 "Product Lead", "CTO"）。如果无法确认，使用 "Speaker 1/2"。
-3.  **语义分段**:
-    * 按语义逻辑分段，避免大段文字堆砌。
-4.  **内容完整性**:
-    * 保留所有对话细节，仅去除无意义的口语赘词。
-
-{transcript_placeholder}
 ```
 
 ---
@@ -376,8 +291,6 @@ You are an expert **Technical Research Analyst & Solution Architect**. Your task
 2. **Logic-Driven:** Focus on the "Why" and "How" behind the technology or product evolution.
 
 3. **Language Rule:** Write the narrative in **Simplified Chinese**, but keep **Technical Terms (e.g., Latency, LLM, Kubernetes, Sharding), Frameworks, and Project Names** in **English**.
-
-4. **NO SUMMARIZATION IN TRANSCRIPT:** In Section 5, you must output the **FULL, VERBATIM** content. Do not summarize, truncate, or omit the technical deep-dives or Q&A.
 
 
 ---
@@ -411,34 +324,4 @@ You are an expert **Technical Research Analyst & Solution Architect**. Your task
 
 (The speaker's view on the future of this specific tech field and industry impact.)
 
----
-
-### 5. 完整逐字稿 (Detailed Transcript)
-
-CRITICAL INSTRUCTION: VERBATIM OUTPUT REQUIRED.
-
-STRICTLY FORBIDDEN: Do not summarize, shorten, or omit any part of the text, especially the technical Q&A session.
-
-- **Rule 1 (Completeness):** You must output every single sentence spoken. Do not use phrases like "(Q&A session omitted)" or "(Technical details truncated)". **If the input text includes a Q&A session, transcribe it fully.**
-
-- Rule 2 (Format):
-
-    [Speaker Name]:
-
-    [Full Content]
-
-- **Rule 3 (Language Handling):**
-
-    - **Mandarin & English:** Keep exactly as spoken. **Do NOT translate.**
-
-    - **Other Languages:** You **MUST** provide a **Paragraph-by-Paragraph Bilingual Version**:
-
-        - Original Text
-
-        - **(Bold Chinese Translation)**
-
-
-_(Self-Correction Mechanism: Before outputting Section 5, ask yourself: "Did I skip any complex technical explanations or the final Q&A?" If yes, go back and include the full text.)_
-
-{transcript_placeholder}
 ```
