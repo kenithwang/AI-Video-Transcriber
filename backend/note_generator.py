@@ -42,7 +42,11 @@ class NoteGenerator:
         prompt_file: Optional[Path] = None,
     ) -> str:
         """
-        Generate structured note from transcript.
+        Generate structured note from transcript using two-stage approach.
+
+        Stage 1: Generate summary sections (1-5)
+        Stage 2: Format the complete transcript
+        Stage 3: Combine both parts
 
         Args:
             transcript: The transcript text to process
@@ -60,25 +64,35 @@ class NoteGenerator:
         else:
             raise ValueError("Must provide either mode_index or mode_key")
 
-        # Replace placeholder with actual transcript
-        if '{transcript_placeholder}' in prompt_template:
-            prompt = prompt_template.replace('{transcript_placeholder}', transcript)
-        else:
-            # Append transcript if no placeholder
-            prompt = f"{prompt_template}\n\n---\n\n{transcript}"
-
         logger.info(f"[note_generator] 使用模式: {mode_key}, 模型: {self.model_name}")
-        logger.info(f"[note_generator] Prompt 长度: {len(prompt)} 字符, Transcript 长度: {len(transcript)} 字符")
+        logger.info(f"[note_generator] 开始两阶段生成...")
+
+        # ===== Stage 1: Generate Summary Sections =====
+        logger.info(f"[note_generator] 阶段1: 生成结构化摘要（Section 1-5）...")
+        summary_prompt = self._prepare_summary_prompt(prompt_template, transcript)
 
         try:
             resp = self._model.generate_content(
-                prompt,
+                summary_prompt,
                 generation_config=self._generation_config
             )
-            return self._extract_text(resp)
+            summary_part = self._extract_text(resp)
+            logger.info(f"[note_generator] 阶段1完成，摘要长度: {len(summary_part)} 字符")
         except Exception as e:
-            logger.error(f"[note_generator] 生成失败: {e}")
+            logger.error(f"[note_generator] 阶段1失败: {e}")
             raise
+
+        # ===== Stage 2: Format Transcript =====
+        logger.info(f"[note_generator] 阶段2: 格式化完整逐字稿...")
+        transcript_content = self._extract_raw_transcript(transcript)
+        formatted_transcript = self._format_transcript(transcript_content)
+        logger.info(f"[note_generator] 阶段2完成，transcript长度: {len(formatted_transcript)} 字符")
+
+        # ===== Stage 3: Combine =====
+        full_note = self._combine_parts(summary_part, formatted_transcript)
+        logger.info(f"[note_generator] 生成完成，总长度: {len(full_note)} 字符")
+
+        return full_note
 
     def _extract_text(self, resp) -> str:
         """Extract text from Gemini response."""
@@ -95,6 +109,112 @@ class NoteGenerator:
             return '\n'.join(acc).strip()
         except Exception:
             return ''
+
+    def _prepare_summary_prompt(self, prompt_template: str, transcript: str) -> str:
+        """Prepare prompt for Stage 1 (summary generation only, no transcript output)."""
+        import re
+
+        # Remove the "完整逐字稿" section from prompt template
+        # Match patterns like "### 5. 完整逐字稿" or "### 6. 完整逐字稿" and everything after
+        pattern = r'###\s*\d+\.\s*完整逐字稿.*$'
+        summary_template = re.sub(pattern, '', prompt_template, flags=re.DOTALL)
+
+        # Add explicit instruction to not output transcript
+        summary_template += "\n\n**重要提示**: 只生成前面的分析部分（Section 1-5），不要输出完整逐字稿部分。"
+
+        # Replace placeholder with actual transcript (for analysis)
+        if '{transcript_placeholder}' in summary_template:
+            prompt = summary_template.replace('{transcript_placeholder}', transcript)
+        else:
+            prompt = f"{summary_template}\n\n---\n\n{transcript}"
+
+        return prompt
+
+    def _extract_raw_transcript(self, transcript: str) -> str:
+        """Extract raw transcript content from the input (remove metadata)."""
+        import re
+
+        # Try to find "## Transcription Content" section
+        match = re.search(r'## Transcription Content\s*\n+(.*)', transcript, re.DOTALL)
+        if match:
+            content = match.group(1).strip()
+            # Remove source line at the end
+            content = re.sub(r'\n*source:\s*.*$', '', content, flags=re.IGNORECASE)
+            return content.strip()
+
+        # Fallback: find first Speaker marker
+        lines = transcript.split('\n')
+        for i, line in enumerate(lines):
+            if re.match(r'\*\*Speaker \d+:\*\*|Speaker \d+:', line):
+                remaining = '\n'.join(lines[i:])
+                remaining = re.sub(r'\n*source:\s*.*$', '', remaining, flags=re.IGNORECASE)
+                return remaining.strip()
+
+        # Last resort: return as-is
+        return transcript
+
+    def _format_transcript(self, raw_transcript: str) -> str:
+        """Stage 2: Use AI to format and clean up the transcript."""
+        format_prompt = """You are a professional transcript formatter. Your ONLY task is to format the provided transcript text according to these rules:
+
+**CRITICAL REQUIREMENTS:**
+1. **Completeness**: Output EVERY SINGLE WORD from the input. Do NOT summarize or omit anything.
+2. **Speaker Labels**: Standardize speaker labels as "**Speaker 1:**", "**Speaker 2:**", etc.
+3. **Paragraph Breaks**: Add paragraph breaks when speaker changes or topic shifts significantly.
+4. **Filler Words**: Remove obvious filler words like "um", "uh", "you know" (but keep all meaningful content).
+5. **Language Handling**:
+   - For **Chinese/English**: Keep as-is, only fix formatting
+   - For **Japanese/Korean/Other**: Provide paragraph-by-paragraph bilingual version:
+     - Original text
+     - **(Bold Chinese translation)**
+
+**Format Example:**
+
+**Speaker 1:**
+[First speaker's content, properly paragraphed]
+
+**Speaker 2:**
+[Second speaker's content, properly paragraphed]
+
+**FORBIDDEN:**
+- Do NOT add your own commentary
+- Do NOT summarize
+- Do NOT skip any content
+- Do NOT translate Chinese/English
+
+Now format this transcript:
+
+---
+
+""" + raw_transcript
+
+        # Use lower temperature for faithful transcription
+        format_config = genai.types.GenerationConfig(
+            temperature=0.0,
+            response_mime_type='text/plain',
+            max_output_tokens=65536,
+        )
+
+        try:
+            resp = self._model.generate_content(
+                format_prompt,
+                generation_config=format_config
+            )
+            formatted = self._extract_text(resp)
+            if formatted:
+                return formatted
+            else:
+                logger.warning(f"[note_generator] 阶段2返回空内容，使用原始transcript")
+                return raw_transcript
+        except Exception as e:
+            logger.error(f"[note_generator] 阶段2格式化失败: {e}")
+            logger.warning(f"[note_generator] 使用原始transcript作为fallback")
+            return raw_transcript
+
+    def _combine_parts(self, summary: str, formatted_transcript: str) -> str:
+        """Stage 3: Combine summary and formatted transcript."""
+        separator = "\n\n---\n\n### 6. 完整逐字稿 (Detailed Transcript)\n\n"
+        return summary.strip() + separator + formatted_transcript.strip()
 
 
 def generate_note_filename(title: str, date: Optional[datetime] = None) -> str:
