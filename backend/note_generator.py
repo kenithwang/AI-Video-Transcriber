@@ -34,6 +34,26 @@ class NoteGenerator:
         )
         self._model = genai.GenerativeModel(self.model_name)
 
+        # Load transcript formatter prompt
+        self._transcript_formatter_prompt = self._load_transcript_formatter_prompt()
+
+    def _load_transcript_formatter_prompt(self) -> str:
+        """Load transcript formatter prompt from Prompts 2.md."""
+        import re
+
+        prompt_file = Path(__file__).parent.parent / 'Prompts 2.md'
+        if not prompt_file.exists():
+            raise RuntimeError(f'Transcript formatter prompt file not found: {prompt_file}')
+
+        content = prompt_file.read_text(encoding='utf-8')
+
+        # Extract content between ``` markers
+        match = re.search(r'```\s*\n(.*?)\n```', content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        else:
+            raise RuntimeError('Failed to parse transcript formatter prompt from Prompts 2.md')
+
     def generate_note(
         self,
         transcript: str,
@@ -160,38 +180,10 @@ class NoteGenerator:
 
     def _format_transcript(self, raw_transcript: str) -> str:
         """Stage 2: Use AI to format and clean up the transcript."""
-        format_prompt = """You are a professional transcript formatter. Your ONLY task is to format the provided transcript text according to these rules:
-
-**CRITICAL REQUIREMENTS:**
-1. **Completeness**: Output EVERY SINGLE WORD from the input. Do NOT summarize or omit anything.
-2. **Speaker Labels**: Standardize speaker labels as "**Speaker 1:**", "**Speaker 2:**", etc.
-3. **Paragraph Breaks**: Add paragraph breaks when speaker changes or topic shifts significantly.
-4. **Filler Words**: Remove obvious filler words like "um", "uh", "you know" (but keep all meaningful content).
-5. **Language Handling**:
-   - For **Chinese/English**: Keep as-is, only fix formatting
-   - For **Japanese/Korean/Other**: Provide paragraph-by-paragraph bilingual version:
-     - Original text
-     - **(Bold Chinese translation)**
-
-**Format Example:**
-
-**Speaker 1:**
-[First speaker's content, properly paragraphed]
-
-**Speaker 2:**
-[Second speaker's content, properly paragraphed]
-
-**FORBIDDEN:**
-- Do NOT add your own commentary
-- Do NOT summarize
-- Do NOT skip any content
-- Do NOT translate Chinese/English
-
-Now format this transcript:
-
----
-
-""" + raw_transcript
+        # Replace placeholder with actual transcript
+        format_prompt = self._transcript_formatter_prompt.replace(
+            '{transcript_placeholder}', raw_transcript
+        )
 
         # Use lower temperature for faithful transcription
         format_config = genai.types.GenerationConfig(
