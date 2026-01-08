@@ -423,8 +423,9 @@ class ChannelMonitor:
         Logic:
         1. Video ID not in processed store
         2. Skip upcoming or currently live streams (only process was_live)
-        3. Not older than max_video_age_days
-        4. For Bilibili: skip paid (充电专属) and cooperation (合作) videos
+        3. Skip videos shorter than 300 seconds (auto-mark as processed & sent)
+        4. Not older than max_video_age_days
+        5. For Bilibili: skip paid (充电专属) and cooperation (合作) videos
 
         Note: lookback_hours is passed for compatibility but filtering is
         primarily based on max_video_age_days to catch any missed videos.
@@ -440,6 +441,19 @@ class ChannelMonitor:
 
             # Skip upcoming or currently live streams (can't transcribe yet)
             if video.live_status in ("is_upcoming", "is_live"):
+                continue
+
+            # Skip videos shorter than 300 seconds (5 minutes)
+            # Auto-mark as processed and sent to avoid future processing
+            if video.duration and video.duration < 300:
+                print(f"      [skip] 视频时长过短 ({video.duration}s < 300s): {video.title}")
+                self.store.mark_processed(
+                    video_id=video.video_id,
+                    title=video.title,
+                    url=video.url,
+                    channel_name=video.channel_name,
+                    sent=True,  # Mark as sent to completely ignore
+                )
                 continue
 
             # Check age constraints

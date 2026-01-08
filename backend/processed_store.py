@@ -65,6 +65,7 @@ class ProcessedStore:
         url: str,
         channel_name: Optional[str] = None,
         transcript_file: Optional[str] = None,
+        sent: bool = False,
     ) -> None:
         """Mark a video as processed and save immediately."""
         self._data["videos"][video_id] = {
@@ -73,7 +74,7 @@ class ProcessedStore:
             "channel_name": channel_name,
             "transcript_file": transcript_file,
             "processed_at": datetime.now().isoformat(),
-            "sent": False,
+            "sent": sent,
         }
         self.save()
 
