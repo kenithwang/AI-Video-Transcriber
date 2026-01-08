@@ -133,11 +133,16 @@ class NoteGenerator:
     def _prepare_summary_prompt(self, prompt_template: str, transcript: str) -> str:
         """Prepare prompt for Stage 1 (summary generation only, no transcript output)."""
         import re
+        from datetime import datetime
 
         # Remove the "完整逐字稿" section from prompt template
         # Match patterns like "### 5. 完整逐字稿" or "### 6. 完整逐字稿" and everything after
         pattern = r'###\s*\d+\.\s*完整逐字稿.*$'
         summary_template = re.sub(pattern, '', prompt_template, flags=re.DOTALL)
+
+        # Replace {CURRENT_DATE} placeholder with actual current date
+        current_date = datetime.now().strftime("%Y年%m月%d日")
+        summary_template = summary_template.replace('{CURRENT_DATE}', current_date)
 
         # Add explicit instruction to not output transcript
         summary_template += "\n\n**重要提示**: 只生成前面的分析部分（Section 1-5），不要输出完整逐字稿部分。"

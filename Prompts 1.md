@@ -10,6 +10,17 @@ You are an expert **Content Analyst**. Your task is to generate a **clear, struc
 2.  **Logical Structure:** For each main viewpoint, explain the reasoning and evidence/examples used to support it.
 3.  **Language Rule:** Write the narrative in **Simplified Chinese**, but keep **Proper Nouns, Technical Terms, and Names** in **English**.
 
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
+
 ---
 
 ## Output Structure:
@@ -67,6 +78,17 @@ You are an expert **Financial Research Assistant**. Your task is to generate a *
 2.  **Data Precision:** Capture all financial metrics accurately.
 3.  **Language Rule:** Write the narrative in **Simplified Chinese**, but keep **Tickers, Company Names, and Technical Terms** in **English**.
 
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
+
 ---
 
 ## Output Structure:
@@ -103,6 +125,17 @@ You are an expert **Senior Project Manager**. Your task is to generate a **struc
 2.  **Data Precision:** You must explicitly capture specific **Dates** (Deadlines, Milestones), **Budget amounts**, and **Deliverable formats**.
 3.  **Language Rule:** Write the content in **Simplified Chinese**, but keep **Person Names, Project Codes, and Technical Terms** in **English**.
 4.  **Structure:** Strictly follow the Markdown template below.
+
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
 
 ---
 
@@ -155,6 +188,17 @@ Please act as an expert Executive Assistant. Your task is to generate a **compre
 * **Capture Nuance:** Capture not just the final decisions, but the **debate, rationale, dissenting opinions, and specific context** behind them.
 * **Data Precision:** You must explicitly list all specific **numbers, dates, dollar amounts (valuations, costs), and proper nouns (names of people/companies)** mentioned.
 
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
+
 The output must be primarily in **Simplified Chinese**, utilizing Markdown formatting.
 
 ---
@@ -200,6 +244,18 @@ Your output must strictly adhere to Markdown formatting.
 
 ## Background (项目背景)
 你是一个专业的会议记录助手。请根据提供的会议【逐字稿】：
+
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
+
 从逐字稿中提取项目的背景信息，并用【简体中文】书写。如果背景信息有层级关系，请使用嵌套列表表示：
 *   [背景信息1]
     *   [背景信息1.1]
@@ -236,6 +292,17 @@ Please act as a **Senior Product Marketing Manager**. Your task is to generate a
 1.  **Focus on "What" and "When":** Prioritize specific feature details, release dates, and technical specifications.
 2.  **Data Precision:** Explicitly capture version numbers (e.g., v2.0), performance metrics (e.g., 20% faster), and pricing if mentioned.
 3.  **Output Language:** Primarily **Simplified Chinese**, but keep Product Names and Technical Terms in **English**.
+
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
 
 The output must strictly adhere to Markdown formatting.
 
@@ -292,6 +359,16 @@ You are an expert **Technical Research Analyst & Solution Architect**. Your task
 
 3. **Language Rule:** Write the narrative in **Simplified Chinese**, but keep **Technical Terms (e.g., Latency, LLM, Kubernetes, Sharding), Frameworks, and Project Names** in **English**.
 
+**时间上下文 (Time Context):**
+- 当前日期: {CURRENT_DATE}
+- 请注意：你的知识截止在2025年1月，今天已经是上述日期
+
+**信息准确性要求 (Accuracy Requirements):**
+1. **严格基于transcript**: 仅使用transcript中明确提到的信息
+2. **不要推断具体人物**: 如果只提到职位（如"首相"、"CEO"）而未说明姓名，保持原样，不要补充具体人名
+3. **不要推断版本号**: 如果提到产品/模型但未说明版本，保持原样，不要假设版本号
+4. **不要用你的知识"更新"信息**: 即使transcript中的信息看起来过时，也要忠实记录
+5. **时间表述**: 如遇到"最近"、"今年"等模糊时间词，参考上述当前日期来理解，但如果transcript未明确说明年份，不要自行添加
 
 ---
 
