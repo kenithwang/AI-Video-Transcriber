@@ -544,6 +544,29 @@ class ChannelMonitor:
             if video.note_mode:
                 print(f"    Note mode: {video.note_mode}")
 
+            # Pre-download live check (flat extraction doesn't always return accurate live_status)
+            try:
+                check_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'skip_download': True,
+                }
+                if self._cookie_file:
+                    cookie_path = Path(self._cookie_file).expanduser()
+                    if cookie_path.exists():
+                        check_opts['cookiefile'] = str(cookie_path)
+                if self._js_interpreter:
+                    check_opts['js_interpreter'] = self._js_interpreter
+
+                with yt_dlp.YoutubeDL(check_opts) as ydl:
+                    info = ydl.extract_info(video.url, download=False)
+                    if info.get('is_live'):
+                        print(f"    [skip] 正在直播，跳过")
+                        continue
+            except Exception as e:
+                # If check fails, proceed with download attempt (will fail there if truly unavailable)
+                print(f"    [!] 直播检查失败: {e}，继续尝试下载")
+
             try:
                 result = await process_video(
                     url=video.url,
