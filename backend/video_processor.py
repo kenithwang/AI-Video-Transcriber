@@ -278,9 +278,9 @@ class VideoProcessor:
         """
         try:
             opts = {'quiet': True}
-            # 继承关键配置，如 JS 解释器和 Cookies
-            if 'js_interpreter' in self.ydl_opts:
-                opts['js_interpreter'] = self.ydl_opts['js_interpreter']
+            # 继承关键配置，如 JS 运行时和 Cookies
+            if 'js_runtimes' in self.ydl_opts:
+                opts['js_runtimes'] = self.ydl_opts['js_runtimes']
             if 'cookiefile' in self.ydl_opts:
                 opts['cookiefile'] = self.ydl_opts['cookiefile']
             if 'http_headers' in self.ydl_opts:
