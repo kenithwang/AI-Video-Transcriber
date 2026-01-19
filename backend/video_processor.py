@@ -55,8 +55,8 @@ class VideoProcessor:
             js_interpreter = shutil.which('node') or shutil.which('nodejs')
         
         if js_interpreter:
-            self.ydl_opts['js_interpreter'] = js_interpreter
-            logger.debug(f"已配置 yt-dlp 使用 JS 解释器: {js_interpreter}")
+            self.ydl_opts['js_runtimes'] = {'node': {'path': js_interpreter}}
+            logger.debug(f"已配置 yt-dlp 使用 JS 运行时: node (path={js_interpreter})")
 
         # 注意：不在这里设置默认 cookies，而是在 download_and_convert 中根据 URL 选择
         # YDL_COOKIEFILE 用于 YouTube，BILIBILI_COOKIE_FILE 用于 Bilibili
