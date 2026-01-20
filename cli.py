@@ -117,7 +117,6 @@ def preflight_checks() -> list[str]:
 
 async def run_pipeline(url: str, outdir: Path, *,
                       keep_audio: bool = False,
-                      model: str | None = None,
                       video_info: dict | None = None,
                       note_mode: int | None = None) -> None:
     from backend.pipeline import process_video
@@ -126,11 +125,6 @@ async def run_pipeline(url: str, outdir: Path, *,
         msg = evt.get("message", "")
         prog = evt.get("progress", 0)
         print(f"[ {prog:>3}% ] {msg}")
-
-    # Allow CLI flags to override env-driven model selection
-    import os as _os
-    if model:
-        _os.environ["GEMINI_MODEL"] = model
 
     res = await process_video(
         url=url,
@@ -233,7 +227,6 @@ async def run_pipelines(
     outdir: Path,
     *,
     keep_audio: bool = False,
-    model: str | None = None,
     continue_on_error: bool = False,
     note_mode: int | None = None,
 ) -> None:
@@ -258,7 +251,6 @@ async def run_pipelines(
                 url=url,
                 outdir=outdir,
                 keep_audio=keep_audio,
-                model=model,
                 video_info=video_info,
                 note_mode=note_mode,
             )
@@ -270,18 +262,13 @@ async def run_pipelines(
 
 async def run_transcript_pipeline(transcript_text: str, outdir: Path, *,
                                   title: str | None = None,
-                                  source_lang: str | None = None,
-                                  model: str | None = None) -> None:
+                                  source_lang: str | None = None) -> None:
     from backend.pipeline import process_transcript_input
 
     async def on_update(evt: dict):
         msg = evt.get("message", "")
         prog = evt.get("progress", 0)
         print(f"[ {prog:>3}% ] {msg}")
-
-    import os as _os
-    if model:
-        _os.environ["GEMINI_MODEL"] = model
 
     res = await process_transcript_input(
         transcript=transcript_text,
@@ -486,10 +473,8 @@ def main():
     if use_transcript_mode:
         if args.url:
             print("[i] 已检测到 transcript 模式，忽略 --url 参数", file=sys.stderr)
-            args.url = None
         if args.urls:
             print("[i] 已检测到 transcript 模式，忽略 --urls 参数", file=sys.stderr)
-            args.urls = None
 
     if not use_transcript_mode and not ensure_ffmpeg():
         sys.exit(1)
@@ -509,13 +494,9 @@ def main():
         return parts
 
     def _select_note_mode() -> int | None:
-        """交互式选择 Note 编辑模式。"""
+        """交互式选择 Note 编辑模式。返回 None 表示用户取消或跳过。"""
         from backend.note_generator import interactive_select_mode
-        try:
-            return interactive_select_mode()
-        except KeyboardInterrupt:
-            print("\n已取消模式选择")
-            return None
+        return interactive_select_mode()  # KeyboardInterrupt 由调用方统一处理
 
     urls: list[str] = []
     if not use_transcript_mode:
@@ -535,10 +516,6 @@ def main():
 
         if not urls:
             print("[!] 未提供视频链接", file=sys.stderr)
-            sys.exit(2)
-    else:
-        if not transcript_text:
-            print("[!] 未提供转录文本", file=sys.stderr)
             sys.exit(2)
 
     # Select note mode
@@ -563,14 +540,12 @@ def main():
                 outdir=outdir,
                 title=args.title,
                 source_lang=args.source_lang,
-                model=args.model,
             ))
         else:
             asyncio.run(run_pipelines(
                 urls=urls,
                 outdir=outdir,
                 keep_audio=args.keep_audio,
-                model=args.model,
                 continue_on_error=args.continue_on_error,
                 note_mode=note_mode,
             ))
