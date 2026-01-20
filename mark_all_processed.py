@@ -41,7 +41,7 @@ def main():
         print(f"[>] {display_name}")
 
         try:
-            videos = monitor.fetch_channel_videos(channel.url, limit=50)
+            videos = monitor.fetch_channel_videos(channel.url, limit=500)
             print(f"    获取到 {len(videos)} 个视频")
 
             marked = 0

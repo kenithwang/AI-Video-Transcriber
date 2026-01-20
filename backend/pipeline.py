@@ -94,7 +94,8 @@ async def process_video(
     import asyncio as _asyncio
     def _do_transcribe():
         return transcriber.transcribe(Path(audio_path))
-    raw_script, detected_language = await _asyncio.to_thread(_do_transcribe)
+    raw_script, detected_language, transcribe_warnings = await _asyncio.to_thread(_do_transcribe)
+    warnings.extend(transcribe_warnings)
 
     safe_title = _sanitize_title_for_filename(video_title)
     script_with_title = f"# {video_title}\n\n{raw_script}\n\nsource: {url}\n"

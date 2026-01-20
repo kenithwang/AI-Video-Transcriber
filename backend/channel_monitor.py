@@ -424,13 +424,12 @@ class ChannelMonitor:
         1. Video ID not in processed store
         2. Skip upcoming or currently live streams (only process was_live)
         3. Skip videos shorter than 300 seconds (auto-mark as processed & sent)
-        4. Not older than max_video_age_days
-        5. For Bilibili: skip paid (充电专属) and cooperation (合作) videos
-
-        Note: lookback_hours is passed for compatibility but filtering is
-        primarily based on max_video_age_days to catch any missed videos.
+        4. Not older than lookback_hours (primary filter)
+        5. Not older than max_video_age_days (hard limit fallback)
+        6. For Bilibili: skip paid (充电专属) and cooperation (合作) videos
         """
         now = datetime.now()
+        lookback_cutoff = now - timedelta(hours=lookback_hours)
         max_age_cutoff = now - timedelta(days=self.max_video_age_days)
 
         new_videos = []
@@ -458,11 +457,12 @@ class ChannelMonitor:
 
             # Check age constraints
             if video.upload_date:
-                # Skip if too old
+                # Skip if older than lookback_hours (primary filter)
+                if video.upload_date < lookback_cutoff:
+                    continue
+                # Also skip if older than max_video_age_days (hard limit)
                 if video.upload_date < max_age_cutoff:
                     continue
-                # Prioritize recent videos but include older unprocessed ones
-                # (up to max_age_days)
 
             # Filter Bilibili paid/cooperation videos
             if video.video_id.startswith("BV"):

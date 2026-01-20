@@ -340,7 +340,7 @@ class ObsidianTranscriber:
         except Exception:
             return f"{size_bytes} bytes"
 
-    def transcribe(self, audio_path: Path, language: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    def transcribe(self, audio_path: Path, language: Optional[str] = None) -> Tuple[str, Optional[str], List[str]]:
         p = Path(audio_path)
         if not p.exists():
             raise FileNotFoundError(f'音频文件不存在: {p}')
@@ -362,6 +362,7 @@ class ObsidianTranscriber:
 
         try:
             texts_by_index: dict[int, str] = {}
+            failed_chunks: List[int] = []
             # 在线程池中并行处理每个分片，保持输出顺序
             with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
                 futures = {}
@@ -384,9 +385,16 @@ class ObsidianTranscriber:
                         texts_by_index[idx] = t
                     else:
                         logger.warning(f"[obsidian] 分片无文本输出: chunk_{idx:03d}.wav")
+                        failed_chunks.append(idx)
                     done_count += 1
                     if done_count % max(1, len(chunks)//10) == 0 or done_count == len(chunks):
                         logger.info(f"[obsidian] 并行转写进度: {done_count}/{len(chunks)} 完成")
+
+            # 收集警告信息
+            warnings: List[str] = []
+            if failed_chunks:
+                failed_chunks.sort()
+                warnings.append(f"转写过程中 {len(failed_chunks)} 个分片失败: {failed_chunks}，内容可能不完整")
 
             # 按原顺序合并
             texts_ordered: List[str] = [texts_by_index.get(i, '') for i in range(1, len(chunks)+1)]
@@ -400,7 +408,7 @@ class ObsidianTranscriber:
                 '## Transcription Content', '',
                 body, ''
             ]
-            return ('\n'.join(lines), det)
+            return ('\n'.join(lines), det, warnings)
         finally:
             # 确保工作目录始终被清理
             try:
