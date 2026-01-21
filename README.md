@@ -64,6 +64,8 @@ uv run python cli.py --transcript-file path/to/transcript.md
 | `TRANSCRIBE_CONCURRENCY` | Parallel workers for chunked transcription (auto by default). |
 | `YDL_COOKIEFILE` | Netscape-format cookie file for YouTube (auto-selected for youtube.com/youtu.be URLs). |
 | `BILIBILI_COOKIE_FILE` | Netscape-format cookie file for Bilibili (auto-selected for bilibili.com URLs). |
+| `YDL_FORMAT` | yt-dlp format selector (default `bestaudio[ext=m4a]/bestaudio/best`). |
+| `YDL_FORMAT_MAX_CANDIDATES` | Max fallback format attempts (default 20, recommend 5-10). |
 | `YDL_USER_AGENT` | Custom User-Agent if the default is blocked. |
 
 > **Note:** Cookie files are automatically selected based on the video URL. YouTube videos use `YDL_COOKIEFILE`, Bilibili videos use `BILIBILI_COOKIE_FILE`.

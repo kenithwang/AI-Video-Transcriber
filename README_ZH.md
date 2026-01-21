@@ -65,6 +65,8 @@ uv run python cli.py --transcript-file path/to/transcript.md
 | `TRANSCRIBE_CONCURRENCY` | 并行转写线程数（默认自动）。 |
 | `YDL_COOKIEFILE` | Netscape 格式 Cookie，用于 YouTube（自动识别 youtube.com/youtu.be）。 |
 | `BILIBILI_COOKIE_FILE` | Netscape 格式 Cookie，用于 B 站（自动识别 bilibili.com）。 |
+| `YDL_FORMAT` | yt-dlp 格式选择（默认 `bestaudio[ext=m4a]/bestaudio/best`）。 |
+| `YDL_FORMAT_MAX_CANDIDATES` | 回退格式尝试上限（默认 20，建议 5-10）。 |
 | `YDL_USER_AGENT` | 自定义 UA，避免被屏蔽。 |
 
 > **说明：** 系统会根据视频 URL 自动选择正确的 Cookie 文件。YouTube 视频使用 `YDL_COOKIEFILE`，B 站视频使用 `BILIBILI_COOKIE_FILE`。

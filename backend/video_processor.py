@@ -83,6 +83,15 @@ class VideoProcessor:
                 self.ydl_opts['http_chunk_size'] = int(chunk_size)
             except ValueError:
                 logger.warning("YDL_HTTP_CHUNK_SIZE 非法: %s", chunk_size)
+        format_candidates = os.getenv("YDL_FORMAT_MAX_CANDIDATES")
+        if format_candidates:
+            try:
+                self._format_max_candidates = max(1, int(format_candidates))
+            except ValueError:
+                logger.warning("YDL_FORMAT_MAX_CANDIDATES 非法: %s", format_candidates)
+                self._format_max_candidates = 20
+        else:
+            self._format_max_candidates = 20
         self._update_hint_checked = False
         self._cached_update_hint: Optional[str] = None
 
@@ -391,7 +400,7 @@ class VideoProcessor:
                 candidates.append(default_id)
 
         # 限制尝试数量，避免低质量格式过多导致重复请求
-        return candidates[:20]
+        return candidates[: self._format_max_candidates]
 
     def _expand_format_tokens(self, format_value: Optional[str]) -> List[str]:
         if not format_value or not isinstance(format_value, str):

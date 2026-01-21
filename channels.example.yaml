@@ -18,6 +18,9 @@ settings:
   # Delay between processing videos (seconds) - prevents rate limiting
   processing_delay: 5
 
+  # Cooldown after hitting rate limit (seconds)
+  rate_limit_cooldown: 3600
+
   # Path to processed videos store (relative to this file or absolute)
   processed_store: ".processed_videos.json"
 

@@ -120,6 +120,7 @@ class ChannelMonitor:
         self.default_lookback_hours = settings.get("lookback_hours", 24)
         self.max_video_age_days = settings.get("max_video_age_days", 7)
         self.processing_delay = settings.get("processing_delay", 5)
+        self.rate_limit_cooldown = settings.get("rate_limit_cooldown", 3600)
 
         # yt-dlp configuration
         self._cookie_file = os.getenv("YDL_COOKIEFILE")
@@ -522,6 +523,15 @@ class ChannelMonitor:
         results = {}
         failed_log_path = outdir / "failed_videos.log"
 
+        def is_rate_limited(message: str) -> bool:
+            text = message.lower()
+            markers = (
+                "rate-limited",
+                "too many requests",
+                "http error 429",
+            )
+            return any(marker in text for marker in markers)
+
         def log_failure(video: VideoInfo, stage: str, error: str):
             """Log failed video to file."""
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -686,6 +696,12 @@ class ChannelMonitor:
                 ))
 
                 results[video.video_id] = False
+
+                if is_rate_limited(error_msg) and self.rate_limit_cooldown > 0:
+                    print(
+                        f"    [!] 检测到限速，等待 {self.rate_limit_cooldown} 秒后继续..."
+                    )
+                    await asyncio.sleep(self.rate_limit_cooldown)
 
             # Delay between videos to avoid rate limiting
             if i < len(videos) and self.processing_delay > 0:
