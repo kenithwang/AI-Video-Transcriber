@@ -53,9 +53,13 @@ class VideoProcessor:
         js_interpreter = os.getenv("YDL_JS_INTERPRETER")
         if not js_interpreter:
             js_interpreter = shutil.which('node') or shutil.which('nodejs')
-        
+
         if js_interpreter:
+            # Python API 使用字典格式: {runtime: {config}}
             self.ydl_opts['js_runtimes'] = {'node': {'path': js_interpreter}}
+            # 启用远程组件下载，解决 YouTube JS challenge
+            # 参见: https://github.com/yt-dlp/yt-dlp/wiki/EJS
+            self.ydl_opts['remote_components'] = {'ejs': 'github'}
             logger.debug(f"已配置 yt-dlp 使用 JS 运行时: node (path={js_interpreter})")
 
         # 注意：不在这里设置默认 cookies，而是在 download_and_convert 中根据 URL 选择
@@ -77,6 +81,8 @@ class VideoProcessor:
                 clients = [item.strip() for item in default_player_client.split(',') if item.strip()]
                 if clients:
                     self.ydl_opts['extractor_args'] = {'youtube': {'player_client': clients}}
+            # 注意：不设置默认 player_client，因为 android client 不支持 cookies
+            # 让 yt-dlp 自动选择合适的 client，配合 remote_components 解决 JS challenge
         chunk_size = os.getenv("YDL_HTTP_CHUNK_SIZE")
         if chunk_size:
             try:
