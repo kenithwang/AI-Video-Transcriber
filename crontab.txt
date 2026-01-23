@@ -1,2 +1,2 @@
-# AI Video Transcriber - 每天北京时间 07:00 (UTC 23:00) 检查新视频并转录
-0 23 * * * cd /home/ken-wang/AI-Video-Transcriber && find temp -name 'watch-*.log' -mtime +2 -delete; .venv/bin/python cli.py --watch >> temp/watch-$(date +\%Y\%m\%d).log 2>&1
+# AI Video Transcriber - 每天北京时间 07:00 和 14:00 (UTC 23:00 和 06:00) 检查新视频并转录
+0 6,23 * * * cd /home/ken-wang/AI-Video-Transcriber && find temp -name 'watch-*.log' -mtime +2 -delete; .venv/bin/python cli.py --watch >> temp/watch-$(date +\%Y\%m\%d).log 2>&1
