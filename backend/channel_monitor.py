@@ -788,10 +788,6 @@ class ChannelMonitor:
 
         if not all_new_videos:
             print("\n[i] No new videos to process")
-            # Still cleanup old entries even when no new videos
-            removed = self.store.cleanup_old(max_age_days=30)
-            if removed > 0:
-                print(f"[i] Cleaned up {removed} old processed entries (>30 days)")
             return summary
 
         if dry_run:
@@ -814,10 +810,6 @@ class ChannelMonitor:
         if self._digest_processed or self._digest_failed:
             self._save_digest()
 
-        # Cleanup old processed entries (older than 30 days)
-        removed = self.store.cleanup_old(max_age_days=30)
-        if removed > 0:
-            print(f"[i] Cleaned up {removed} old processed entries (>30 days)")
 
         return summary
 
