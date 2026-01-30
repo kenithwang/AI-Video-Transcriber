@@ -49,18 +49,37 @@ class VideoProcessor:
             'fragment_retries': 10,
         }
 
-        # 尝试自动配置 JS 解释器 (Node.js)，解决 "No supported JavaScript runtime" 警告
+        # 尝试自动配置 JS 解释器，解决 "No supported JavaScript runtime" 警告
+        # yt-dlp 默认使用 deno，也支持 node
         js_interpreter = os.getenv("YDL_JS_INTERPRETER")
+        js_runtime_name = None
         if not js_interpreter:
-            js_interpreter = shutil.which('node') or shutil.which('nodejs')
+            # 优先检查 deno（yt-dlp 默认），其次是 node
+            deno_path = shutil.which('deno')
+            node_path = shutil.which('node') or shutil.which('nodejs')
+            if deno_path:
+                js_interpreter = deno_path
+                js_runtime_name = 'deno'
+            elif node_path:
+                js_interpreter = node_path
+                js_runtime_name = 'node'
+        else:
+            # 用户指定了 JS 解释器路径，需要确定运行时名称
+            if 'deno' in js_interpreter.lower():
+                js_runtime_name = 'deno'
+            else:
+                js_runtime_name = 'node'
 
-        if js_interpreter:
+        if js_interpreter and js_runtime_name:
             # Python API 使用字典格式: {runtime: {config}}
-            self.ydl_opts['js_runtimes'] = {'node': {'path': js_interpreter}}
-            # 启用远程组件下载，解决 YouTube JS challenge
-            # 参见: https://github.com/yt-dlp/yt-dlp/wiki/EJS
-            self.ydl_opts['remote_components'] = {'ejs': 'github'}
-            logger.debug(f"已配置 yt-dlp 使用 JS 运行时: node (path={js_interpreter})")
+            self.ydl_opts['js_runtimes'] = {js_runtime_name: {'path': js_interpreter}}
+            logger.debug(f"已配置 yt-dlp 使用 JS 运行时: {js_runtime_name} (path={js_interpreter})")
+
+        # 始终启用远程组件下载，解决 YouTube JS challenge
+        # 即使没有找到本地 JS 运行时，也设置此选项，让 yt-dlp 尝试使用默认的 deno
+        # 参见: https://github.com/yt-dlp/yt-dlp/wiki/EJS
+        # Python API 格式: set of strings，如 {'ejs:github'}
+        self.ydl_opts['remote_components'] = {'ejs:github'}
 
         # 注意：不在这里设置默认 cookies，而是在 download_and_convert 中根据 URL 选择
         # YDL_COOKIEFILE 用于 YouTube，BILIBILI_COOKIE_FILE 用于 Bilibili
@@ -293,9 +312,11 @@ class VideoProcessor:
         """
         try:
             opts = {'quiet': True}
-            # 继承关键配置，如 JS 运行时和 Cookies
+            # 继承关键配置，如 JS 运行时、远程组件 和 Cookies
             if 'js_runtimes' in self.ydl_opts:
                 opts['js_runtimes'] = self.ydl_opts['js_runtimes']
+            if 'remote_components' in self.ydl_opts:
+                opts['remote_components'] = self.ydl_opts['remote_components']
             if 'cookiefile' in self.ydl_opts:
                 opts['cookiefile'] = self.ydl_opts['cookiefile']
             if 'http_headers' in self.ydl_opts:
