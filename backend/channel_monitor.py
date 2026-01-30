@@ -137,13 +137,14 @@ class ChannelMonitor:
 
     def _generate_brief_summary(self, transcript: str) -> str:
         """Generate a brief summary (150-300 chars) from transcript."""
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return ""
 
-        genai.configure(api_key=api_key)
+        client = genai.Client(api_key=api_key)
         model_name = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
         if model_name.startswith("models/"):
             model_name = model_name.split("/", 1)[-1]
@@ -153,10 +154,10 @@ class ChannelMonitor:
         prompt = BRIEF_SUMMARY_PROMPT.format(transcript=truncated)
 
         try:
-            model = genai.GenerativeModel(model_name)
-            resp = model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     max_output_tokens=30000,
                 ),

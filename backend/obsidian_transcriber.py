@@ -11,7 +11,8 @@ from threading import Lock
 from typing import Optional, Tuple, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +71,9 @@ class ObsidianTranscriber:
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise RuntimeError('未设置 GEMINI_API_KEY')
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
         self.model_name = os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview')
-        # google-generativeai 期待短名称
+        # google-genai uses short names
         if self.model_name.startswith('models/'):
             self.model_name = self.model_name.split('/', 1)[-1]
         self.segment_seconds = segment_seconds
@@ -112,10 +113,10 @@ class ObsidianTranscriber:
             'Do NOT skip or truncate any part. Do NOT summarize. '
             'Include every single word spoken. Output only the complete transcript text.'
         )
-        self._generation_config = genai.types.GenerationConfig(
+        self._generation_config = types.GenerateContentConfig(
             temperature=0.0,
-            response_mime_type='text/plain',
             max_output_tokens=65536,
+            system_instruction=self._system_instruction,
         )
         self._model_lock = Lock()
         self._max_models = max(1, self.parallelism)
@@ -249,11 +250,12 @@ class ObsidianTranscriber:
         uploaded = None
         try:
             # 优先使用 File API（支持更大文件，最大 2GB）
-            uploaded = genai.upload_file(path=str(chunk.path))
+            uploaded = self.client.files.upload(file=str(chunk.path))
             # 必须同时传递音频文件和文本提示词
-            resp = model.generate_content(
-                [uploaded, self._transcribe_prompt],
-                generation_config=self._generation_config
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=[uploaded, self._transcribe_prompt],
+                config=self._generation_config
             )
             return self._extract(resp)
         except Exception as e:
@@ -264,9 +266,10 @@ class ObsidianTranscriber:
                     data = f.read()
                 # 使用正确的 MIME 类型
                 mime_type = self._get_mime_type(chunk.path)
-                resp = model.generate_content(
-                    [{"mime_type": mime_type, "data": data}, self._transcribe_prompt],
-                    generation_config=self._generation_config
+                resp = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[{"mime_type": mime_type, "data": data}, self._transcribe_prompt],
+                    config=self._generation_config
                 )
                 return self._extract(resp)
             except Exception as e2:
@@ -277,12 +280,15 @@ class ObsidianTranscriber:
             # 清理上传的文件（File API 文件会保留 2 天）
             if uploaded:
                 try:
-                    genai.delete_file(uploaded.name)
+                    self.client.files.delete(name=uploaded.name)
                 except Exception:
                     pass
 
     def _build_model(self):
-        return genai.GenerativeModel(self.model_name, system_instruction=self._system_instruction)
+        # In the new google-genai SDK, we don't need to build model instances.
+        # The client.models.generate_content() handles model management.
+        # This method returns a placeholder to maintain backward compatibility with the pool.
+        return object()
 
     def _prime_model(self):
         model = self._build_model()

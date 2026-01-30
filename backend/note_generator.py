@@ -8,7 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from .prompt_loader import get_prompt_by_index, get_prompt_by_key, list_modes
 
@@ -22,17 +23,15 @@ class NoteGenerator:
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise RuntimeError('未设置 GEMINI_API_KEY')
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
         self.model_name = os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview')
         if self.model_name.startswith('models/'):
             self.model_name = self.model_name.split('/', 1)[-1]
 
-        self._generation_config = genai.types.GenerationConfig(
+        self._generation_config = types.GenerateContentConfig(
             temperature=0.2,
-            response_mime_type='text/plain',
             max_output_tokens=65536,
         )
-        self._model = genai.GenerativeModel(self.model_name)
 
         # Load transcript formatter prompt
         self._transcript_formatter_prompt = self._load_transcript_formatter_prompt()
@@ -92,9 +91,10 @@ class NoteGenerator:
         summary_prompt = self._prepare_summary_prompt(prompt_template, transcript)
 
         try:
-            resp = self._model.generate_content(
-                summary_prompt,
-                generation_config=self._generation_config
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=summary_prompt,
+                config=self._generation_config
             )
             summary_part = self._extract_text(resp)
             logger.info(f"[note_generator] 阶段1完成，摘要长度: {len(summary_part)} 字符")
@@ -191,16 +191,16 @@ class NoteGenerator:
         )
 
         # Use lower temperature for faithful transcription
-        format_config = genai.types.GenerationConfig(
+        format_config = types.GenerateContentConfig(
             temperature=0.0,
-            response_mime_type='text/plain',
             max_output_tokens=65536,
         )
 
         try:
-            resp = self._model.generate_content(
-                format_prompt,
-                generation_config=format_config
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=format_prompt,
+                config=format_config
             )
             formatted = self._extract_text(resp)
             if formatted:
