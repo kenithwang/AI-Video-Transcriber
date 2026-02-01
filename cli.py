@@ -166,7 +166,6 @@ async def generate_note_from_transcript(
     mode_index: int,
 ) -> None:
     """Read transcript and generate note using selected mode."""
-    import asyncio as _asyncio
     import subprocess
     from backend.note_generator import NoteGenerator, generate_note_filename
 
@@ -177,7 +176,7 @@ async def generate_note_from_transcript(
         return generator.generate_note(transcript_content, mode_index=mode_index)
 
     print(f"[i] 正在生成 Note...")
-    note_content = await _asyncio.to_thread(_do_generate)
+    note_content = await asyncio.to_thread(_do_generate)
 
     note_filename = generate_note_filename(title)
     note_path = outdir / note_filename
