@@ -283,7 +283,7 @@ Your output must strictly adhere to Markdown formatting.
 
 ---
 
-## Product Announcement (`product_annoucement`)
+## Product Announcement (`product_announcement`)
 
 ```
 Please act as a **Senior Product Marketing Manager**. Your task is to generate a **structured, feature-focused Product Announcement Memo** based on the provided meeting transcript.

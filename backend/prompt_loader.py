@@ -28,7 +28,7 @@ def load_prompts(prompt_file: Path | str | None = None) -> Dict[str, dict]:
 
     content = prompt_file.read_text(encoding="utf-8")
 
-    # Pattern to match mode headers like: ## Product Announcement (`product_annoucement`)
+    # Pattern to match mode headers like: ## Product Announcement (`product_announcement`)
     # or ## Client Call Mode (`client_call`)
     header_pattern = re.compile(
         r'^##\s+(.+?)\s*\(`([a-z_]+)`\)\s*$',

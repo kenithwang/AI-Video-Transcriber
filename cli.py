@@ -15,7 +15,7 @@ try:
         if path:
             load_dotenv(path, override=False)
             print(f"[i] 已加载环境文件: {path}")
-except Exception:
+except ImportError:
     def _load_dotenv_if_present():
         # python-dotenv 不存在时静默跳过
         pass
@@ -37,7 +37,7 @@ def print_env_warnings():
 
 
 # Watch mode log helpers
-WATCH_LOG_PATH = Path("temp/watch.log")
+WATCH_LOG_PATH = Path(__file__).resolve().parent / "temp" / "watch.log"
 
 
 def cleanup_old_watch_logs(log_path: Path, days: int = 3) -> None:
@@ -110,7 +110,7 @@ def preflight_checks() -> list[str]:
                 f"[!] 检测到 yt-dlp 可更新：当前 {ytdlp_version}，最新 {latest}。建议运行 `pip install --upgrade yt-dlp`。"
             )
     except Exception as exc:
-        logging.debug(f"预检 yt-dlp 更新失败: {exc}")
+        logging.debug("预检 yt-dlp 更新失败: %s", exc)
 
     return notices
 
@@ -158,6 +158,7 @@ async def run_pipeline(url: str, outdir: Path, *,
             outdir=outdir,
             mode_index=note_mode,
         )
+
 
 async def generate_note_from_transcript(
     transcript_path: Path,
@@ -392,15 +393,8 @@ def main():
                 print("[i] 没有配置任何频道")
             else:
                 print(f"配置的频道 ({len(channels)} 个):\n")
-                NOTE_MODES = {
-                    1: "general_summary",
-                    2: "market_view",
-                    3: "project_kickoff",
-                    4: "client_call",
-                    5: "internal_meeting",
-                    6: "product_annoucement",
-                    7: "tech_view",
-                }
+                from backend.prompt_loader import list_modes
+                note_modes = {idx: key for idx, key, _ in list_modes()}
                 for i, ch in enumerate(channels, 1):
                     status = "启用" if ch.enabled else "禁用"
                     name = ch.name or ch.url
@@ -408,7 +402,7 @@ def main():
                     print(f"     URL: {ch.url}")
                     print(f"     回溯时间: {ch.lookback_hours} 小时")
                     if ch.note_mode:
-                        mode_name = NOTE_MODES.get(ch.note_mode, "unknown")
+                        mode_name = note_modes.get(ch.note_mode, "unknown")
                         print(f"     Note模式: {ch.note_mode} ({mode_name})")
                     print()
         except FileNotFoundError as e:
@@ -614,7 +608,10 @@ def perform_storage_check(url: str, outdir: Path) -> dict | None:
             print(f"[!] {w}")
         print("="*40)
         print("继续运行可能会导致任务失败或系统卡顿。")
-        confirm = input("是否强制继续？(输入 'yes' 继续，其他键取消): ").strip().lower()
+        try:
+            confirm = input("是否强制继续？(输入 'yes' 继续，其他键取消): ").strip().lower()
+        except EOFError:
+            confirm = ""
         if confirm != 'yes':
             print("已取消操作。")
             sys.exit(0)
