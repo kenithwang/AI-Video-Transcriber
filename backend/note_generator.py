@@ -240,7 +240,16 @@ def generate_note_filename(title: str, date: Optional[datetime] = None) -> str:
     # Sanitize title for filename
     safe_title = re.sub(r"[^\w\-\s]", "", title)
     safe_title = re.sub(r"\s+", " ", safe_title).strip()
-    safe_title = safe_title[:80] if safe_title else "untitled"
+    if not safe_title:
+        safe_title = "untitled"
+    else:
+        # Truncate by byte length (not character count) to avoid
+        # 'File name too long' errors with multi-byte characters (e.g. CJK).
+        # Reserve bytes for prefix "YYYY MM DD - " (13) and suffix ".md" (3).
+        max_title_bytes = 200
+        encoded = safe_title.encode("utf-8")
+        if len(encoded) > max_title_bytes:
+            safe_title = encoded[:max_title_bytes].decode("utf-8", errors="ignore").rstrip()
 
     return f"{date_str} - {safe_title}.md"
 
