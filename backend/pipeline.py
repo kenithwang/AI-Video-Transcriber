@@ -25,14 +25,25 @@ async def _write_file(path: Path, content: str) -> None:
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")
 
 
-def _sanitize_title_for_filename(title: str) -> str:
-    """Sanitize video title for safe filenames."""
+def _sanitize_title_for_filename(title: str, max_bytes: int = 200) -> str:
+    """Sanitize video title for safe filenames.
+
+    Truncates by byte length (not character count) to avoid
+    'File name too long' errors with multi-byte characters (e.g. CJK).
+    """
     import re
     if not title:
         return "untitled"
     safe = re.sub(r"[^\w\-\s]", "", title)
     safe = re.sub(r"\s+", "_", safe).strip("._-")
-    return safe[:80] or "untitled"
+    if not safe:
+        return "untitled"
+    # Truncate to max_bytes without splitting multi-byte characters
+    encoded = safe.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return safe
+    truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    return truncated.rstrip("._-") or "untitled"
 
 
 async def process_video(
