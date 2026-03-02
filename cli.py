@@ -381,6 +381,8 @@ def main():
                         help="列出配置的频道并退出")
     parser.add_argument("--lookback", type=int, default=None,
                         help="覆盖默认的时间窗口（小时）")
+    parser.add_argument("--note-mode", type=int, choices=range(1, 8), default=None,
+                        metavar="N", help="Note 模式 (1-7)，跳过交互选择")
     args = parser.parse_args()
 
     # Handle --list-channels
@@ -514,11 +516,14 @@ def main():
     # Select note mode
     note_mode: int | None = None
     if not use_transcript_mode:
-        try:
-            note_mode = _select_note_mode()
-        except KeyboardInterrupt:
-            print()
-            sys.exit(1)
+        if args.note_mode is not None:
+            note_mode = args.note_mode
+        else:
+            try:
+                note_mode = _select_note_mode()
+            except KeyboardInterrupt:
+                print()
+                sys.exit(1)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -608,14 +613,17 @@ def perform_storage_check(url: str, outdir: Path) -> dict | None:
             print(f"[!] {w}")
         print("="*40)
         print("继续运行可能会导致任务失败或系统卡顿。")
-        try:
-            confirm = input("是否强制继续？(输入 'yes' 继续，其他键取消): ").strip().lower()
-        except EOFError:
-            confirm = ""
-        if confirm != 'yes':
-            print("已取消操作。")
-            sys.exit(0)
-        print("[i] 用户选择强制继续...\n")
+        if not sys.stdin.isatty():
+            print("[i] 非交互模式，自动继续...\n")
+        else:
+            try:
+                confirm = input("是否强制继续？(输入 'yes' 继续，其他键取消): ").strip().lower()
+            except EOFError:
+                confirm = ""
+            if confirm != 'yes':
+                print("已取消操作。")
+                sys.exit(0)
+            print("[i] 用户选择强制继续...\n")
     else:
         print("[i] 空间检查通过。\n")
 
