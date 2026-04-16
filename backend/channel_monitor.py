@@ -24,6 +24,7 @@ import yt_dlp
 BILIBILI_API_DELAY = 0.3
 
 from .processed_store import ProcessedStore
+from .sync_config import build_rclone_copy_command
 
 
 # 简短摘要生成的 prompt
@@ -614,24 +615,26 @@ class ChannelMonitor:
 
                         print(f"    [OK] Note: {note_filename}")
 
-                        # Sync to OneDrive
-                        onedrive_path = "Obsidian Vault:/应用/remotely-save/Obsidian Vault/AI Transcribe/Transcript/"
+                        sync_cmd = build_rclone_copy_command(note_path)
                         sync_success = False
-                        try:
-                            sync_result = subprocess.run(
-                                ["rclone", "copy", str(note_path), onedrive_path],
-                                capture_output=True,
-                                timeout=120,
-                            )
-                            if sync_result.returncode == 0:
-                                print(f"    [OK] Synced to OneDrive")
-                                sync_success = True
-                            else:
-                                print(f"    [!] OneDrive sync failed")
-                        except FileNotFoundError:
-                            pass  # rclone not installed
-                        except subprocess.TimeoutExpired:
-                            print(f"    [!] OneDrive sync timeout")
+                        if sync_cmd:
+                            try:
+                                sync_result = subprocess.run(
+                                    sync_cmd,
+                                    capture_output=True,
+                                    timeout=120,
+                                )
+                                if sync_result.returncode == 0:
+                                    print("    [OK] Synced to configured Rclone remote")
+                                    sync_success = True
+                                else:
+                                    print("    [!] Rclone sync failed")
+                            except FileNotFoundError:
+                                pass  # rclone not installed
+                            except subprocess.TimeoutExpired:
+                                print("    [!] Rclone sync timeout")
+                        else:
+                            print("    [i] RCLONE_REMOTE_PATH 未配置，跳过远端同步")
 
                         # Local files kept for news_summary to send as email attachments
                         # news_summary will cleanup these files after sending

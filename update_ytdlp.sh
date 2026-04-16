@@ -4,13 +4,18 @@
 
 set -uo pipefail
 
-PROJECT_DIR="/home/ken-wang/AI-Video-Transcriber"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$PROJECT_DIR/temp/update_ytdlp.log"
-UV="/home/ken-wang/.local/bin/uv"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 cd "$PROJECT_DIR"
 mkdir -p temp
+
+UV="${UV:-$(command -v uv || true)}"
+if [ -z "$UV" ]; then
+    echo "$TIMESTAMP [FAILED] update_ytdlp: uv not found in PATH" >> "$LOG_FILE"
+    exit 1
+fi
 
 # 获取当前锁定的 yt-dlp 版本
 old_version=$(grep -A1 'name = "yt-dlp"' uv.lock | grep 'version' | head -1 | sed 's/.*"\(.*\)"/\1/')

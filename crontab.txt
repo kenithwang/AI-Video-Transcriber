@@ -1,7 +1,11 @@
-# AI Video Transcriber - 每天北京时间 07:00 和 14:00 (UTC 23:00 和 06:00) 检查新视频并转录
+# AI Video Transcriber - 示例 crontab
+# 如仓库不在 $HOME/AI-Video-Transcriber，请把下面命令中的路径改成你的实际路径
+PATH="$HOME/.local/bin:$HOME/.deno/bin:/usr/local/bin:/usr/bin:/bin"
+
+# 每天北京时间 07:00 和 14:00 (UTC 23:00 和 06:00) 检查新视频并转录
 # 结果摘要写入 temp/watch.log，失败详情写入 temp/failed_videos.log
-0 6,23 * * * export PATH="/home/ken-wang/.deno/bin:$PATH" && cd /home/ken-wang/AI-Video-Transcriber && /home/ken-wang/.local/bin/uv run python cli.py --watch >/dev/null 2>&1
+0 6,23 * * * cd "$HOME/AI-Video-Transcriber" && uv run python cli.py --watch >/dev/null 2>&1
 
 # 每天北京时间 04:00 (UTC 20:00) 自动更新 yt-dlp
 # 日志写入 temp/update_ytdlp.log
-0 20 * * * /home/ken-wang/AI-Video-Transcriber/update_ytdlp.sh >/dev/null 2>&1
+0 20 * * * cd "$HOME/AI-Video-Transcriber" && ./update_ytdlp.sh >/dev/null 2>&1

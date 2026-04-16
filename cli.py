@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 
+from backend.sync_config import build_rclone_copy_command
+
 try:
     # 优先从当前工作目录加载 .env（若存在）
     from dotenv import load_dotenv, find_dotenv  # type: ignore
@@ -185,28 +187,30 @@ async def generate_note_from_transcript(
 
     print(f"[i] Note 已保存: {note_path}")
 
-    # Sync to OneDrive
-    onedrive_path = "Obsidian Vault:/应用/remotely-save/Obsidian Vault/AI Transcribe/Transcript/"
-    print(f"[i] 正在同步到 OneDrive...")
+    sync_cmd = build_rclone_copy_command(note_path)
     sync_success = False
-    try:
-        result = subprocess.run(
-            ["rclone", "copy", str(note_path), onedrive_path],
-            capture_output=True,
-            timeout=120
-        )
-        if result.returncode == 0:
-            print(f"[i] 已同步到 OneDrive: {onedrive_path}{note_filename}")
-            sync_success = True
-        else:
-            stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
-            print(f"[!] 同步失败: {stderr}", file=sys.stderr)
-    except FileNotFoundError:
-        print("[!] 未找到 rclone，跳过 OneDrive 同步", file=sys.stderr)
-    except subprocess.TimeoutExpired:
-        print("[!] OneDrive 同步超时", file=sys.stderr)
-    except Exception as e:
-        print(f"[!] OneDrive 同步出错: {e}", file=sys.stderr)
+    if sync_cmd:
+        print("[i] 正在同步到 Rclone remote...")
+        try:
+            result = subprocess.run(
+                sync_cmd,
+                capture_output=True,
+                timeout=120
+            )
+            if result.returncode == 0:
+                print("[i] 已同步到配置的 Rclone remote")
+                sync_success = True
+            else:
+                stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
+                print(f"[!] 同步失败: {stderr}", file=sys.stderr)
+        except FileNotFoundError:
+            print("[!] 未找到 rclone，跳过远端同步", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            print("[!] Rclone 同步超时", file=sys.stderr)
+        except Exception as e:
+            print(f"[!] Rclone 同步出错: {e}", file=sys.stderr)
+    else:
+        print("[i] 未配置 RCLONE_REMOTE_PATH，跳过远端同步")
 
     # 同步成功后清理本地文件
     if sync_success:
