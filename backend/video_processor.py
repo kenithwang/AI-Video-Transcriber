@@ -144,39 +144,7 @@ class VideoProcessor:
             # 更新yt-dlp选项
             ydl_opts = self.ydl_opts.copy()
             ydl_opts['outtmpl'] = output_template
-
-            parsed = urlparse(url)
-            hostname = parsed.hostname or ""
-            if hostname.endswith("bilibili.com"):
-                # 哔哩哔哩对 Referer/UA 较为敏感，缺失时常出现下载被截断
-                headers = {
-                    'Referer': 'https://www.bilibili.com/',
-                    'User-Agent': self._default_user_agent,
-                }
-                existing_headers = dict(ydl_opts.get('http_headers') or {})
-                existing_headers.update(headers)
-                ydl_opts['http_headers'] = existing_headers
-
-                cookie_file = os.getenv('BILIBILI_COOKIE_FILE')
-                if cookie_file:
-                    cookie_path = Path(cookie_file).expanduser()
-                    if cookie_path.exists():
-                        ydl_opts['cookiefile'] = str(cookie_path)
-                    else:
-                        logger.warning(
-                            "BILIBILI_COOKIE_FILE 指定的文件不存在: %s", cookie_path
-                        )
-            elif hostname.endswith("youtube.com") or hostname.endswith("youtu.be"):
-                # YouTube 使用专门的 cookies 文件
-                cookie_file = os.getenv('YDL_COOKIEFILE')
-                if cookie_file:
-                    cookie_path = Path(cookie_file).expanduser()
-                    if cookie_path.exists():
-                        ydl_opts['cookiefile'] = str(cookie_path)
-                    else:
-                        logger.warning(
-                            "YDL_COOKIEFILE 指定的文件不存在: %s", cookie_path
-                        )
+            self._apply_url_specific_options(url, ydl_opts)
 
             logger.info(f"开始下载视频: {url}")
             
@@ -321,6 +289,7 @@ class VideoProcessor:
                 opts['cookiefile'] = self.ydl_opts['cookiefile']
             if 'http_headers' in self.ydl_opts:
                 opts['http_headers'] = self.ydl_opts['http_headers']
+            self._apply_url_specific_options(url, opts)
 
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -335,6 +304,40 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"获取视频信息失败: {str(e)}")
             raise Exception(f"获取视频信息失败: {str(e)}")
+
+    def _apply_url_specific_options(self, url: str, opts: dict) -> None:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        if hostname.endswith("bilibili.com"):
+            # 哔哩哔哩对 Referer/UA 较为敏感，缺失时常出现下载被截断
+            headers = {
+                'Referer': 'https://www.bilibili.com/',
+                'User-Agent': self._default_user_agent,
+            }
+            existing_headers = dict(opts.get('http_headers') or {})
+            existing_headers.update(headers)
+            opts['http_headers'] = existing_headers
+
+            cookie_file = os.getenv('BILIBILI_COOKIE_FILE')
+            if cookie_file:
+                cookie_path = Path(cookie_file).expanduser()
+                if cookie_path.exists():
+                    opts['cookiefile'] = str(cookie_path)
+                else:
+                    logger.warning(
+                        "BILIBILI_COOKIE_FILE 指定的文件不存在: %s", cookie_path
+                    )
+        elif hostname.endswith("youtube.com") or hostname.endswith("youtu.be"):
+            # YouTube 使用专门的 cookies 文件
+            cookie_file = os.getenv('YDL_COOKIEFILE')
+            if cookie_file:
+                cookie_path = Path(cookie_file).expanduser()
+                if cookie_path.exists():
+                    opts['cookiefile'] = str(cookie_path)
+                else:
+                    logger.warning(
+                        "YDL_COOKIEFILE 指定的文件不存在: %s", cookie_path
+                    )
 
     async def _run_ytdlp(self, url: str, opts: dict, download: bool = True):
         def _extract():

@@ -787,6 +787,7 @@ class ChannelMonitor:
             "channels_checked": len(channels),
             "new_videos_found": len(all_new_videos),
             "videos_processed": 0,
+            "videos_sent": 0,
             "errors": errors,
         }
 

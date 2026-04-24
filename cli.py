@@ -347,7 +347,7 @@ async def run_watch_mode(
     found = result['new_videos_found']
     processed = result['videos_processed']
     failed = found - processed
-    sent = processed  # Assumes all processed videos are synced to OneDrive
+    sent = result.get("videos_sent", 0)
 
     return {
         "found": found,

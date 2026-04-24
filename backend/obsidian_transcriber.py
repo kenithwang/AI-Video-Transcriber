@@ -400,7 +400,9 @@ class ObsidianTranscriber:
             warnings: List[str] = []
             if failed_chunks:
                 failed_chunks.sort()
-                warnings.append(f"转写过程中 {len(failed_chunks)} 个分片失败: {failed_chunks}，内容可能不完整")
+                raise RuntimeError(
+                    f"转写过程中 {len(failed_chunks)} 个分片失败: {failed_chunks}，未生成不完整转录"
+                )
 
             # 按原顺序合并
             texts_ordered: List[str] = [texts_by_index.get(i, '') for i in range(1, len(chunks)+1)]

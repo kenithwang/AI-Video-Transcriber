@@ -10,6 +10,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "yt-dlp" },
 ]
 
@@ -18,6 +19,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=0.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", specifier = ">=2.32.0" },
     { name = "yt-dlp", specifier = ">=2024.12.13" },
 ]
 

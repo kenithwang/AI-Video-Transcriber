@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -68,6 +69,7 @@ async def process_video(
     emit = _create_emitter(on_update)
 
     short_id = uuid.uuid4().hex[:6]
+    work_dir = temp_dir / f".work_{short_id}"
     status = {
         "status": "processing",
         "progress": 0,
@@ -95,7 +97,7 @@ async def process_video(
     # 1) Download + convert
     status.update({"progress": 10, "message": "downloading video..."})
     await emit(status)
-    audio_path, video_title = await video_processor.download_and_convert(url, temp_dir, video_info=video_info)
+    audio_path, video_title = await video_processor.download_and_convert(url, work_dir, video_info=video_info)
 
     status.update({"progress": 35, "message": "video downloaded; transcribing..."})
     await emit(status)
@@ -119,7 +121,7 @@ async def process_video(
     transcript_path = temp_dir / transcript_filename
     await _write_file(transcript_path, script_with_title)
 
-    # Optional cleanup of downloaded audio
+    # Optional cleanup of downloaded audio and this job's private work directory.
     audio_deleted = False
     if not keep_audio:
         try:
@@ -128,34 +130,20 @@ async def process_video(
         except Exception as e:
             logger.warning(f"删除音频文件失败: {audio_path}, 错误: {e}")
             audio_deleted = False
-
-    # 清理 temp 下的非 .md 临时文件/目录（仅音视频及切片）
-    try:
-        import shutil
-        audio_resolved = Path(audio_path).resolve(strict=False)
-        for entry in temp_dir.iterdir():
-            if entry.is_file():
-                if entry.suffix.lower() in ('.m4a', '.mp3', '.wav', '.webm', '.mp4'):
-                    # keep_audio 时保留当前 job 的音频文件，其余媒体仍清理
-                    if keep_audio:
-                        try:
-                            if entry.resolve(strict=False) == audio_resolved:
-                                continue
-                        except Exception:
-                            pass
-                    try:
-                        entry.unlink()
-                    except Exception as e:
-                        logger.debug(f"清理媒体文件失败: {entry}, 错误: {e}")
-            elif entry.is_dir():
-                name = entry.name.lower()
-                if name.startswith('obs_work_') or name.startswith('chunks'):
-                    try:
-                        shutil.rmtree(entry, ignore_errors=True)
-                    except Exception as e:
-                        logger.debug(f"清理临时目录失败: {entry}, 错误: {e}")
-    except Exception as e:
-        logger.debug(f"清理临时文件时发生错误: {e}")
+        try:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception as e:
+            logger.debug(f"清理工作目录失败: {work_dir}, 错误: {e}")
+    else:
+        try:
+            audio_resolved = Path(audio_path).resolve(strict=False)
+            for entry in work_dir.iterdir():
+                if entry.is_file() and entry.suffix.lower() in ('.m4a', '.mp3', '.wav', '.webm', '.mp4'):
+                    if entry.resolve(strict=False) == audio_resolved:
+                        continue
+                    entry.unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug(f"清理当前任务多余媒体文件失败: {e}")
 
     final_status = {**status, "progress": 100, "status": "completed"}
     final_status["message"] = "completed (with warnings)" if warnings else "completed"
