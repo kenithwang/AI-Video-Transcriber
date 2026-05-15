@@ -30,12 +30,14 @@ class ProcessedStore:
                     # Ensure expected structure
                     if "videos" not in data:
                         data["videos"] = {}
+                    if "failures" not in data:
+                        data["failures"] = {}
                     return data
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[!] Warning: Failed to load processed store: {e}")
                 print(f"[!] Starting with empty store")
-                return {"version": 1, "videos": {}}
-        return {"version": 1, "videos": {}}
+                return {"version": 1, "videos": {}, "failures": {}}
+        return {"version": 1, "videos": {}, "failures": {}}
 
     def save(self) -> None:
         """Persist store to disk atomically."""
@@ -66,9 +68,11 @@ class ProcessedStore:
         channel_name: Optional[str] = None,
         transcript_file: Optional[str] = None,
         sent: bool = False,
+        failed_attempts: Optional[int] = None,
+        skip_reason: Optional[str] = None,
     ) -> None:
         """Mark a video as processed and save immediately."""
-        self._data["videos"][video_id] = {
+        info = {
             "title": title,
             "url": url,
             "channel_name": channel_name,
@@ -76,7 +80,43 @@ class ProcessedStore:
             "processed_at": datetime.now().isoformat(),
             "sent": sent,
         }
+        if failed_attempts is not None:
+            info["failed_attempts"] = failed_attempts
+        if skip_reason:
+            info["skip_reason"] = skip_reason
+
+        self._data["videos"][video_id] = info
+        self._data.get("failures", {}).pop(video_id, None)
         self.save()
+
+    def record_failure(
+        self,
+        video_id: str,
+        title: str,
+        url: str,
+        channel_name: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> int:
+        """Record a failed processing attempt and return total failures."""
+        failures = self._data.setdefault("failures", {})
+        existing = failures.get(video_id) or {}
+        count = int(existing.get("count") or 0) + 1
+
+        failures[video_id] = {
+            "title": title,
+            "url": url,
+            "channel_name": channel_name,
+            "count": count,
+            "last_error": error,
+            "last_failed_at": datetime.now().isoformat(),
+        }
+        self.save()
+        return count
+
+    def get_failure_count(self, video_id: str) -> int:
+        """Return recorded failure count for a video."""
+        info = self._data.get("failures", {}).get(video_id) or {}
+        return int(info.get("count") or 0)
 
     def get_unsent_videos(self) -> dict[str, dict]:
         """Get all videos that have been processed but not yet sent via email."""

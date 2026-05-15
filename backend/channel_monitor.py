@@ -122,6 +122,7 @@ class ChannelMonitor:
         self.max_video_age_days = settings.get("max_video_age_days", 7)
         self.processing_delay = settings.get("processing_delay", 5)
         self.rate_limit_cooldown = settings.get("rate_limit_cooldown", 3600)
+        self.max_failure_attempts = settings.get("max_failure_attempts", 3)
 
         # yt-dlp configuration
         self._cookie_file = os.getenv("YDL_COOKIEFILE")
@@ -700,6 +701,30 @@ class ChannelMonitor:
                 ))
 
                 results[video.video_id] = False
+                failed_attempts = self.store.record_failure(
+                    video_id=video.video_id,
+                    title=video.title,
+                    url=video.url,
+                    channel_name=video.channel_name,
+                    error=error_msg,
+                )
+                print(
+                    f"    [!] 失败次数: {failed_attempts}/{self.max_failure_attempts}"
+                )
+
+                if failed_attempts >= self.max_failure_attempts:
+                    self.store.mark_processed(
+                        video_id=video.video_id,
+                        title=video.title,
+                        url=video.url,
+                        channel_name=video.channel_name,
+                        sent=True,
+                        failed_attempts=failed_attempts,
+                        skip_reason=error_msg,
+                    )
+                    print(
+                        "    [skip] 已连续失败达到阈值，标记为 processed/sent，后续不再重试"
+                    )
 
                 if is_rate_limited(error_msg) and self.rate_limit_cooldown > 0:
                     print(
