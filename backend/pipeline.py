@@ -56,6 +56,7 @@ async def process_video(
     segment_seconds: Optional[int] = None,
     parallelism: Optional[int] = None,
     video_info: Optional[dict] = None,
+    download_url: Optional[str] = None,
 ) -> dict:
     """
     Simplified processing pipeline used by CLI: download video, transcribe audio, and write raw/transcript files.
@@ -97,7 +98,11 @@ async def process_video(
     # 1) Download + convert
     status.update({"progress": 10, "message": "downloading video..."})
     await emit(status)
-    audio_path, video_title = await video_processor.download_and_convert(url, work_dir, video_info=video_info)
+    audio_path, video_title = await video_processor.download_and_convert(
+        download_url or url,
+        work_dir,
+        video_info=video_info,
+    )
 
     status.update({"progress": 35, "message": "video downloaded; transcribing..."})
     await emit(status)

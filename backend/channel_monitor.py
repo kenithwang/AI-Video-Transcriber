@@ -20,6 +20,8 @@ import requests
 import yaml
 import yt_dlp
 
+from .xiaoyuzhou_client import XiaoyuzhouClient, parse_podcast_id
+
 # B站 API 请求间隔（秒），避免触发风控
 BILIBILI_API_DELAY = 0.3
 
@@ -89,6 +91,7 @@ class VideoInfo:
     duration: int
     note_mode: Optional[int] = None  # Note generation mode from channel config
     live_status: Optional[str] = None  # is_upcoming, is_live, was_live, or None
+    media_url: Optional[str] = None  # Direct media URL for podcast episodes
 
 
 class ChannelMonitor:
@@ -283,7 +286,7 @@ class ChannelMonitor:
         return [ch for ch in self.get_channels() if ch.enabled]
 
     def fetch_channel_videos(
-        self, channel_url: str, limit: int = 30
+        self, channel_url: str, limit: Optional[int] = 30
     ) -> list[VideoInfo]:
         """
         Fetch recent videos from a channel using yt-dlp.
@@ -295,11 +298,35 @@ class ChannelMonitor:
         Returns:
             List of VideoInfo objects
         """
+        podcast_id = parse_podcast_id(channel_url)
+        if podcast_id:
+            client = XiaoyuzhouClient()
+            episodes = client.list_episodes_with_fallback(podcast_id, limit=limit)
+            videos = []
+            for episode in episodes:
+                audio_url = episode.get("audio_url") or ""
+                if not audio_url:
+                    continue
+                videos.append(
+                    VideoInfo(
+                        video_id=episode["eid"],
+                        url=episode.get("episode_url")
+                        or f"https://www.xiaoyuzhoufm.com/episode/{episode['eid']}",
+                        title=episode.get("title") or "Untitled Episode",
+                        channel_id=episode.get("pid") or podcast_id,
+                        channel_name=episode.get("podcast_title") or "Unknown Podcast",
+                        upload_date=self._parse_iso_datetime(episode.get("pub_date")),
+                        duration=episode.get("duration") or 0,
+                        media_url=audio_url,
+                    )
+                )
+            return videos
+
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": True,  # Fast metadata-only extraction
-            "playlistend": limit,
+            "playlistend": limit or 1000,
         }
 
         if self._cookie_file:
@@ -372,6 +399,37 @@ class ChannelMonitor:
             return datetime.strptime(date_str, "%Y%m%d")
         except ValueError:
             return None
+
+    def _parse_iso_datetime(self, value: Optional[str]) -> Optional[datetime]:
+        """Parse an ISO timestamp into a naive local datetime for age filters."""
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone().replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return None
+
+    def baseline_xiaoyuzhou(self) -> dict[str, int]:
+        """Mark all existing episodes for enabled Xiaoyuzhou feeds as sent."""
+        channel_count = 0
+        episode_count = 0
+        for channel in self.get_enabled_channels():
+            if not parse_podcast_id(channel.url):
+                continue
+            channel_count += 1
+            for episode in self.fetch_channel_videos(channel.url, limit=None):
+                self.store.mark_processed(
+                    video_id=episode.video_id,
+                    title=episode.title,
+                    url=episode.url,
+                    channel_name=episode.channel_name,
+                    sent=True,
+                )
+                episode_count += 1
+        return {"channels": channel_count, "episodes": episode_count}
 
     def _check_bilibili_video_type(self, bvid: str) -> tuple[Optional[str], Optional[str]]:
         """
@@ -557,28 +615,29 @@ class ChannelMonitor:
             if video.note_mode:
                 print(f"    Note mode: {video.note_mode}")
 
-            # Pre-download live check (flat extraction doesn't always return accurate live_status)
-            try:
-                check_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'skip_download': True,
-                }
-                if self._cookie_file:
-                    cookie_path = Path(self._cookie_file).expanduser()
-                    if cookie_path.exists():
-                        check_opts['cookiefile'] = str(cookie_path)
-                if self._js_interpreter:
-                    check_opts['js_interpreter'] = self._js_interpreter
+            # Pre-download live check (podcast media URLs are never live streams).
+            if not video.media_url:
+                try:
+                    check_opts = {
+                        'quiet': True,
+                        'no_warnings': True,
+                        'skip_download': True,
+                    }
+                    if self._cookie_file:
+                        cookie_path = Path(self._cookie_file).expanduser()
+                        if cookie_path.exists():
+                            check_opts['cookiefile'] = str(cookie_path)
+                    if self._js_interpreter:
+                        check_opts['js_interpreter'] = self._js_interpreter
 
-                with yt_dlp.YoutubeDL(check_opts) as ydl:
-                    info = ydl.extract_info(video.url, download=False)
-                    if info.get('is_live'):
-                        print(f"    [skip] 正在直播，跳过")
-                        continue
-            except Exception as e:
-                # If check fails, proceed with download attempt (will fail there if truly unavailable)
-                print(f"    [!] 直播检查失败: {e}，继续尝试下载")
+                    with yt_dlp.YoutubeDL(check_opts) as ydl:
+                        info = ydl.extract_info(video.url, download=False)
+                        if info.get('is_live'):
+                            print(f"    [skip] 正在直播，跳过")
+                            continue
+                except Exception as e:
+                    # If check fails, proceed with download attempt.
+                    print(f"    [!] 直播检查失败: {e}，继续尝试下载")
 
             try:
                 result = await process_video(
@@ -586,6 +645,8 @@ class ChannelMonitor:
                     temp_dir=outdir,
                     on_update=on_update,
                     keep_audio=keep_audio,
+                    download_url=video.media_url,
+                    video_info={"title": video.title, "duration": video.duration},
                 )
 
                 transcript_file = result.get("transcript_file")

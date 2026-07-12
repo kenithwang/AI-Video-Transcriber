@@ -383,11 +383,27 @@ def main():
                         help="预览模式：只显示会处理的视频，不实际执行")
     parser.add_argument("--list-channels", action="store_true",
                         help="列出配置的频道并退出")
+    parser.add_argument("--baseline-xiaoyuzhou", action="store_true",
+                        help="把已配置小宇宙节目的全部历史单集标记为已处理已发送")
     parser.add_argument("--lookback", type=int, default=None,
                         help="覆盖默认的时间窗口（小时）")
     parser.add_argument("--note-mode", type=int, choices=range(1, 8), default=None,
                         metavar="N", help="Note 模式 (1-7)，跳过交互选择")
     args = parser.parse_args()
+
+    if args.baseline_xiaoyuzhou:
+        try:
+            from backend.channel_monitor import ChannelMonitor
+            monitor = ChannelMonitor(args.config)
+            result = monitor.baseline_xiaoyuzhou()
+            print(
+                f"[OK] 小宇宙历史基线完成: "
+                f"{result['channels']} 个节目, {result['episodes']} 个单集"
+            )
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            print(f"[!] 小宇宙历史基线失败: {exc}", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)
 
     # Handle --list-channels
     if args.list_channels:

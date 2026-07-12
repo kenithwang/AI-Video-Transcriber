@@ -49,3 +49,9 @@ channels:
   - url: "https://space.bilibili.com/123456789/video"
     name: "某UP主"
     enabled: false
+
+  # Xiaoyuzhou podcast (requires repository-external XIAOYUZHOU_TOKEN_FILE)
+  - url: "https://www.xiaoyuzhoufm.com/podcast/6021f949a789fca4eff4492c"
+    name: "小宇宙示例节目"
+    enabled: false
+    note_mode: 1
