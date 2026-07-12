@@ -100,17 +100,29 @@ class XiaoyuzhouMonitorTests(unittest.TestCase):
                 duration=3600,
                 media_url="https://cdn.test/episode.mp3",
             )
+            second_episode = VideoInfo(
+                video_id="d" * 24,
+                url="https://www.xiaoyuzhoufm.com/episode/" + "d" * 24,
+                title="Episode 2",
+                channel_id="b" * 24,
+                channel_name="Podcast",
+                upload_date=datetime.now(),
+                duration=3600,
+                media_url="https://cdn.test/episode-2.mp3",
+            )
             calls = []
 
             def fake_fetch(url, limit=30):
                 calls.append((url, limit))
-                return [episode]
+                return [episode, second_episode]
 
             monitor.fetch_channel_videos = fake_fetch
-            result = monitor.baseline_xiaoyuzhou()
+            with patch.object(monitor.store, "save", wraps=monitor.store.save) as save:
+                result = monitor.baseline_xiaoyuzhou()
 
         self.assertEqual(1, result["channels"])
-        self.assertEqual(1, result["episodes"])
+        self.assertEqual(2, result["episodes"])
+        self.assertEqual(1, save.call_count)
         self.assertEqual([(channels_url := "https://www.xiaoyuzhoufm.com/podcast/" + "b" * 24, None)], calls)
         self.assertTrue(monitor.store.get_video_info("a" * 24)["sent"])
 

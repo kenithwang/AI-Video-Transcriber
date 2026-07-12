@@ -89,6 +89,29 @@ class ProcessedStore:
         self._data.get("failures", {}).pop(video_id, None)
         self.save()
 
+    def mark_processed_batch(self, videos: list[dict]) -> None:
+        """Mark multiple videos processed and persist the store once."""
+        if not videos:
+            return
+        processed_at = datetime.now().isoformat()
+        for video in videos:
+            video_id = video["video_id"]
+            info = {
+                "title": video["title"],
+                "url": video["url"],
+                "channel_name": video.get("channel_name"),
+                "transcript_file": video.get("transcript_file"),
+                "processed_at": processed_at,
+                "sent": bool(video.get("sent", False)),
+            }
+            if video.get("failed_attempts") is not None:
+                info["failed_attempts"] = video["failed_attempts"]
+            if video.get("skip_reason"):
+                info["skip_reason"] = video["skip_reason"]
+            self._data["videos"][video_id] = info
+            self._data.get("failures", {}).pop(video_id, None)
+        self.save()
+
     def record_failure(
         self,
         video_id: str,

@@ -420,15 +420,20 @@ class ChannelMonitor:
             if not parse_podcast_id(channel.url):
                 continue
             channel_count += 1
-            for episode in self.fetch_channel_videos(channel.url, limit=None):
-                self.store.mark_processed(
-                    video_id=episode.video_id,
-                    title=episode.title,
-                    url=episode.url,
-                    channel_name=episode.channel_name,
-                    sent=True,
-                )
-                episode_count += 1
+            episodes = self.fetch_channel_videos(channel.url, limit=None)
+            self.store.mark_processed_batch(
+                [
+                    {
+                        "video_id": episode.video_id,
+                        "title": episode.title,
+                        "url": episode.url,
+                        "channel_name": episode.channel_name,
+                        "sent": True,
+                    }
+                    for episode in episodes
+                ]
+            )
+            episode_count += len(episodes)
         return {"channels": channel_count, "episodes": episode_count}
 
     def _check_bilibili_video_type(self, bvid: str) -> tuple[Optional[str], Optional[str]]:
