@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 import requests
@@ -21,12 +21,11 @@ import yaml
 import yt_dlp
 
 from .xiaoyuzhou_client import XiaoyuzhouClient, parse_podcast_id
+from .processed_store import ProcessedStore
+from .sync_config import build_rclone_copy_command
 
 # B站 API 请求间隔（秒），避免触发风控
 BILIBILI_API_DELAY = 0.3
-
-from .processed_store import ProcessedStore
-from .sync_config import build_rclone_copy_command
 
 
 # 简短摘要生成的 prompt
@@ -230,8 +229,8 @@ class ChannelMonitor:
             digest["processed"][entry.video_id] = asdict(entry)
 
         # Append new failed entries (keyed by video_id)
-        for entry in self._digest_failed:
-            digest["failed"][entry.video_id] = asdict(entry)
+        for failure_entry in self._digest_failed:
+            digest["failed"][failure_entry.video_id] = asdict(failure_entry)
 
         # Cleanup entries older than 3 days
         removed = self._cleanup_old_digest_entries(digest, max_age_days=3)
@@ -256,11 +255,30 @@ class ChannelMonitor:
                 f"Please create it from channels.example.yaml"
             )
 
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            raise ValueError(
+                f"Invalid channel configuration YAML: {self.config_path}: {exc}"
+            ) from exc
 
-        if "channels" not in config:
-            config["channels"] = []
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            raise ValueError("Invalid channel configuration: root must be a mapping")
+
+        settings = config.get("settings", {})
+        if not isinstance(settings, dict):
+            raise ValueError("Invalid channel configuration: settings must be a mapping")
+
+        channels = config.setdefault("channels", [])
+        if not isinstance(channels, list):
+            raise ValueError("Invalid channel configuration: channels must be a list")
+        if any(not isinstance(channel, dict) for channel in channels):
+            raise ValueError(
+                "Invalid channel configuration: each channel must be a mapping"
+            )
 
         return config
 
@@ -322,7 +340,7 @@ class ChannelMonitor:
                 )
             return videos
 
-        ydl_opts = {
+        ydl_opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": True,  # Fast metadata-only extraction
@@ -338,11 +356,7 @@ class ChannelMonitor:
             ydl_opts["js_interpreter"] = self._js_interpreter
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(channel_url, download=False)
-            except yt_dlp.utils.DownloadError as e:
-                print(f"[!] Failed to fetch channel: {e}")
-                return []
+            info = ydl.extract_info(channel_url, download=False)
 
         if not info:
             return []
@@ -483,6 +497,8 @@ class ChannelMonitor:
         self,
         videos: list[VideoInfo],
         lookback_hours: int,
+        *,
+        mutate_store: bool = True,
     ) -> list[VideoInfo]:
         """
         Filter videos to only include new, unprocessed ones.
@@ -513,13 +529,14 @@ class ChannelMonitor:
             # Auto-mark as processed and sent to avoid future processing
             if video.duration and video.duration < 300:
                 print(f"      [skip] 视频时长过短 ({video.duration}s < 300s): {video.title}")
-                self.store.mark_processed(
-                    video_id=video.video_id,
-                    title=video.title,
-                    url=video.url,
-                    channel_name=video.channel_name,
-                    sent=True,  # Mark as sent to completely ignore
-                )
+                if mutate_store:
+                    self.store.mark_processed(
+                        video_id=video.video_id,
+                        title=video.title,
+                        url=video.url,
+                        channel_name=video.channel_name,
+                        sent=True,  # Mark as sent to completely ignore
+                    )
                 continue
 
             # Check age constraints
@@ -623,7 +640,7 @@ class ChannelMonitor:
             # Pre-download live check (podcast media URLs are never live streams).
             if not video.media_url:
                 try:
-                    check_opts = {
+                    check_opts: dict[str, Any] = {
                         'quiet': True,
                         'no_warnings': True,
                         'skip_download': True,
@@ -638,7 +655,7 @@ class ChannelMonitor:
                     with yt_dlp.YoutubeDL(check_opts) as ydl:
                         info = ydl.extract_info(video.url, download=False)
                         if info.get('is_live'):
-                            print(f"    [skip] 正在直播，跳过")
+                            print("    [skip] 正在直播，跳过")
                             continue
                 except Exception as e:
                     # If check fails, proceed with download attempt.
@@ -661,7 +678,7 @@ class ChannelMonitor:
                 note_file = None
                 if video.note_mode and transcript_file:
                     try:
-                        print(f"    [i] Generating note...")
+                        print("    [i] Generating note...")
                         transcript_path = outdir / transcript_file
                         transcript_content = transcript_path.read_text(encoding="utf-8")
 
@@ -707,7 +724,7 @@ class ChannelMonitor:
                         # news_summary will cleanup these files after sending
                         # (see news_summary/video_tracker.py:cleanup_sent_notes)
                         if sync_success:
-                            print(f"    [OK] Synced, local files retained for email delivery")
+                            print("    [OK] Synced, local files retained for email delivery")
 
                     except Exception as e:
                         error_msg = f"{type(e).__name__}: {e}"
@@ -717,7 +734,7 @@ class ChannelMonitor:
                 # Generate brief summary for digest
                 brief_summary = ""
                 if transcript_file:
-                    print(f"    [i] Generating brief summary...")
+                    print("    [i] Generating brief summary...")
                     transcript_path = outdir / transcript_file
                     try:
                         transcript_content = transcript_path.read_text(encoding="utf-8")
@@ -833,6 +850,8 @@ class ChannelMonitor:
                 "channels_checked": 0,
                 "new_videos_found": 0,
                 "videos_processed": 0,
+                "videos_sent": 0,
+                "channel_errors": 0,
                 "errors": [],
             }
 
@@ -850,7 +869,11 @@ class ChannelMonitor:
                 print(f"    Found {len(videos)} video(s)")
 
                 lookback = lookback_override or channel.lookback_hours
-                new_videos = self.filter_new_videos(videos, lookback)
+                new_videos = self.filter_new_videos(
+                    videos,
+                    lookback,
+                    mutate_store=not dry_run,
+                )
 
                 if new_videos:
                     print(f"    New videos: {len(new_videos)}")
@@ -868,7 +891,7 @@ class ChannelMonitor:
                         print(f"      - {v.title}{age_str}")
                     all_new_videos.extend(new_videos)
                 else:
-                    print(f"    No new videos")
+                    print("    No new videos")
 
             except Exception as e:
                 print(f"    [!] Error: {e}")
@@ -879,6 +902,7 @@ class ChannelMonitor:
             "new_videos_found": len(all_new_videos),
             "videos_processed": 0,
             "videos_sent": 0,
+            "channel_errors": len(errors),
             "errors": errors,
         }
 

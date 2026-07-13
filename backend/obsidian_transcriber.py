@@ -278,7 +278,7 @@ class ObsidianTranscriber:
         finally:
             self._release_model(model)
             # 清理上传的文件（File API 文件会保留 2 天）
-            if uploaded:
+            if uploaded and uploaded.name:
                 try:
                     self.client.files.delete(name=uploaded.name)
                 except Exception:

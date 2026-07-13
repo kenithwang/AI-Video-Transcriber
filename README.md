@@ -169,6 +169,14 @@ uv run python cli.py --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" --kee
 
 中文：默认音频会清掉；加上 `--keep-audio` 就会保留。
 
+### 6. Keep only the transcript
+
+```bash
+uv run python cli.py --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" --no-note
+```
+
+You can also enter `0` at the interactive Note prompt. Transcript-file mode generates a Note only when `--note-mode N` is explicitly provided.
+
 ## Where Your Files Go
 
 By default, files are written into `temp/`.
@@ -263,6 +271,21 @@ Preview only:
 uv run python cli.py --watch --dry-run
 ```
 
+Dry-run does not modify `.processed_videos.json`. Fetch failures are reported as channel errors, and a watch run exits nonzero when all discovered work fails or every channel check fails.
+
+Inspect local monitor health without network access:
+
+```bash
+uv run python cli.py --status
+```
+
+Remove only stale `.work_*` job directories (24 hours by default):
+
+```bash
+uv run python cli.py --cleanup
+uv run python cli.py --cleanup --cleanup-hours 48
+```
+
 中文：
 如果你想让它自动监控频道，就配置 `channels.yaml`，然后运行 `--watch`。
 
@@ -271,6 +294,12 @@ uv run python cli.py --watch --dry-run
 If you want to modify the code:
 - CLI entry point: `cli.py`
 - Core logic: `backend/`
+
+Run the test suite with an isolated pytest dependency:
+
+```bash
+uv run --with pytest pytest -q
+```
 
 If you only want to use the tool, you can ignore the codebase entirely.
 

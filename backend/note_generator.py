@@ -84,10 +84,10 @@ class NoteGenerator:
             raise ValueError("Must provide either mode_index or mode_key")
 
         logger.info(f"[note_generator] 使用模式: {mode_key}, 模型: {self.model_name}")
-        logger.info(f"[note_generator] 开始两阶段生成...")
+        logger.info("[note_generator] 开始两阶段生成...")
 
         # ===== Stage 1: Generate Summary Sections =====
-        logger.info(f"[note_generator] 阶段1: 生成结构化摘要（Section 1-5）...")
+        logger.info("[note_generator] 阶段1: 生成结构化摘要（Section 1-5）...")
         summary_prompt = self._prepare_summary_prompt(prompt_template, transcript)
 
         try:
@@ -103,7 +103,7 @@ class NoteGenerator:
             raise
 
         # ===== Stage 2: Format Transcript =====
-        logger.info(f"[note_generator] 阶段2: 格式化完整逐字稿...")
+        logger.info("[note_generator] 阶段2: 格式化完整逐字稿...")
         transcript_content = self._extract_raw_transcript(transcript)
         formatted_transcript = self._format_transcript(transcript_content)
         logger.info(f"[note_generator] 阶段2完成，transcript长度: {len(formatted_transcript)} 字符")
@@ -206,11 +206,11 @@ class NoteGenerator:
             if formatted:
                 return formatted
             else:
-                logger.warning(f"[note_generator] 阶段2返回空内容，使用原始transcript")
+                logger.warning("[note_generator] 阶段2返回空内容，使用原始transcript")
                 return raw_transcript
         except Exception as e:
             logger.error(f"[note_generator] 阶段2格式化失败: {e}")
-            logger.warning(f"[note_generator] 使用原始transcript作为fallback")
+            logger.warning("[note_generator] 使用原始transcript作为fallback")
             return raw_transcript
 
     def _combine_parts(self, summary: str, formatted_transcript: str) -> str:
@@ -254,12 +254,12 @@ def generate_note_filename(title: str, date: Optional[datetime] = None) -> str:
     return f"{date_str} - {safe_title}.md"
 
 
-def interactive_select_mode(prompt_file: Optional[Path] = None) -> int:
+def interactive_select_mode(prompt_file: Optional[Path] = None) -> Optional[int]:
     """
     Interactively prompt user to select a mode.
 
     Returns:
-        Selected mode index (1-based)
+        Selected mode index (1-based), or None to skip Note generation.
     """
     modes = list_modes(prompt_file)
 
@@ -267,17 +267,21 @@ def interactive_select_mode(prompt_file: Optional[Path] = None) -> int:
     print("-" * 40)
     for idx, key, name in modes:
         print(f"  {idx}. {name}")
+    print("  0. 跳过 Note，只保留转录稿")
     print("-" * 40)
 
     while True:
         try:
             choice = input(f"请输入编号 (1-{len(modes)}): ").strip()
             idx = int(choice)
+            if idx == 0:
+                print("已跳过 Note 生成")
+                return None
             if 1 <= idx <= len(modes):
                 selected = modes[idx - 1]
                 print(f"已选择: {selected[2]} ({selected[1]})")
                 return idx
-            print(f"请输入 1 到 {len(modes)} 之间的数字")
+            print(f"请输入 0 到 {len(modes)} 之间的数字")
         except ValueError:
             print("请输入有效数字")
         except EOFError:

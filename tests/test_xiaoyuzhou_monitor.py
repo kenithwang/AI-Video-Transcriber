@@ -123,7 +123,8 @@ class XiaoyuzhouMonitorTests(unittest.TestCase):
         self.assertEqual(1, result["channels"])
         self.assertEqual(2, result["episodes"])
         self.assertEqual(1, save.call_count)
-        self.assertEqual([(channels_url := "https://www.xiaoyuzhoufm.com/podcast/" + "b" * 24, None)], calls)
+        channels_url = "https://www.xiaoyuzhoufm.com/podcast/" + "b" * 24
+        self.assertEqual([(channels_url, None)], calls)
         self.assertTrue(monitor.store.get_video_info("a" * 24)["sent"])
 
 

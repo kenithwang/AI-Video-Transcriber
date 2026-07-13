@@ -13,6 +13,15 @@ class ProjectConfigTests(unittest.TestCase):
             "channel_monitor imports requests directly, so it must be a direct dependency",
         )
 
+    def test_defusedxml_is_declared_as_direct_dependency(self) -> None:
+        data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = data["project"]["dependencies"]
+
+        self.assertTrue(
+            any(dep.split(">=", 1)[0] == "defusedxml" for dep in dependencies),
+            "RSS parsing must use a hardened XML parser",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

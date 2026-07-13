@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import json
 import os
+import shutil
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 import logging
@@ -78,25 +81,180 @@ def write_watch_log(
     processed: int,
     sent: int,
     failed: int,
+    channel_errors: int = 0,
+    channels_checked: int | None = None,
     error: str | None = None,
+    log_path: Path | None = None,
 ) -> None:
     """Write a single summary line to watch log."""
-    WATCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    cleanup_old_watch_logs(WATCH_LOG_PATH, days=3)
+    target_path = log_path or WATCH_LOG_PATH
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    cleanup_old_watch_logs(target_path, days=3)
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if error:
         log_line = f"{timestamp} [FAILED] Watch 异常退出: {error}"
     else:
-        log_line = f"{timestamp} [SUCCESS] 发现 {found} 个新视频, 处理 {processed} 个, 发送 {sent} 个, 失败 {failed} 个"
+        outcome = classify_watch_outcome(
+            found=found,
+            processed=processed,
+            failed=failed,
+            channel_errors=channel_errors,
+            channels_checked=channels_checked,
+        )
+        log_line = (
+            f"{timestamp} [{outcome}] 发现 {found} 个新视频, "
+            f"处理 {processed} 个, 已发送 {sent} 个, "
+            f"待发送 {max(0, processed - sent)} 个, 失败 {failed} 个, "
+            f"频道错误 {channel_errors} 个"
+        )
 
-    with open(WATCH_LOG_PATH, "a", encoding="utf-8") as f:
+    with open(target_path, "a", encoding="utf-8") as f:
         f.write(log_line + "\n")
 
 
-def preflight_checks() -> list[str]:
+def classify_watch_outcome(
+    *,
+    found: int,
+    processed: int,
+    failed: int,
+    channel_errors: int = 0,
+    channels_checked: int | None = None,
+) -> str:
+    """Classify a watch run without hiding partial or total failures."""
+    if failed <= 0 and channel_errors <= 0:
+        return "SUCCESS"
+    all_discovered_work_failed = found > 0 and processed <= 0 and failed > 0
+    all_channel_checks_failed = processed <= 0 and channel_errors > 0 and (
+        channels_checked is None or channel_errors >= channels_checked
+    )
+    if all_discovered_work_failed or all_channel_checks_failed:
+        return "FAILED"
+    return "PARTIAL"
+
+
+def watch_run_failed(stats: dict, *, dry_run: bool = False) -> bool:
+    """Return True when a watch run made no progress because of failures."""
+    found = stats.get("found", 0)
+    processed = stats.get("processed", 0)
+    failed = stats.get("failed", 0)
+    channel_errors = stats.get("channel_errors", 0)
+    channels_checked = stats.get("channels_checked")
+    return (
+        not dry_run and found > 0 and processed <= 0 and failed > 0
+    ) or (
+        processed <= 0
+        and channel_errors > 0
+        and (channels_checked is None or channel_errors >= channels_checked)
+    )
+
+
+def _directory_size(path: Path) -> int:
+    total = 0
+    if not path.exists():
+        return total
+    for entry in path.rglob("*"):
+        try:
+            if entry.is_file():
+                total += entry.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def collect_runtime_status(config_path: Path, outdir: Path) -> dict:
+    """Collect local monitor status without contacting remote services."""
+    from backend.channel_monitor import ChannelMonitor
+
+    monitor = ChannelMonitor(config_path)
+    channels = monitor.get_channels()
+    workdirs = list(outdir.glob(".work_*")) if outdir.exists() else []
+    watch_log = outdir / "watch.log"
+    last_watch = ""
+    if watch_log.exists():
+        try:
+            lines = [line.strip() for line in watch_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+            last_watch = lines[-1] if lines else ""
+        except OSError:
+            pass
+
+    return {
+        "channels_total": len(channels),
+        "channels_enabled": sum(1 for channel in channels if channel.enabled),
+        "processed": monitor.store.count(),
+        "unsent": len(monitor.store.get_unsent_videos()),
+        "failures": monitor.store.failure_count(),
+        "workdirs": len(workdirs),
+        "temp_bytes": _directory_size(outdir),
+        "last_watch": last_watch,
+        "store_path": str(monitor._store_path),
+    }
+
+
+def print_runtime_status(status: dict) -> None:
+    """Print a compact operational status report."""
+    print("运行状态")
+    print(f"  频道: {status['channels_enabled']} 启用 / {status['channels_total']} 总计")
+    print(f"  已处理: {status['processed']}")
+    print(f"  待发送: {status['unsent']}")
+    print(f"  待重试失败: {status['failures']}")
+    print(f"  遗留工作目录: {status['workdirs']}")
+    print(f"  临时目录占用: {status['temp_bytes'] / (1024 ** 2):.1f} MB")
+    print(f"  状态文件: {status['store_path']}")
+    if status["last_watch"]:
+        print(f"  上次监控: {status['last_watch']}")
+
+
+def cleanup_stale_workdirs(
+    outdir: Path,
+    *,
+    older_than_hours: float = 24,
+    now: float | None = None,
+) -> dict:
+    """Remove only stale per-job work directories under the output directory."""
+    if older_than_hours < 0:
+        raise ValueError("cleanup hours must be non-negative")
+    cutoff = (now if now is not None else time.time()) - older_than_hours * 3600
+    removed = 0
+    freed_bytes = 0
+    if not outdir.exists():
+        return {"removed": 0, "freed_bytes": 0}
+
+    for path in outdir.glob(".work_*"):
+        try:
+            if path.is_symlink() or not path.is_dir() or path.stat().st_mtime > cutoff:
+                continue
+            freed_bytes += _directory_size(path)
+            shutil.rmtree(path)
+            removed += 1
+        except FileNotFoundError:
+            continue
+    return {"removed": removed, "freed_bytes": freed_bytes}
+
+
+def preflight_checks(
+    *,
+    cache_path: Path | None = None,
+    now: float | None = None,
+    max_age_hours: float = 24,
+) -> list[str]:
     """执行 CLI 运行前的依赖检查，返回需要提示给用户的消息。"""
+    cache_path = cache_path or (Path(__file__).resolve().parent / "temp" / "yt-dlp-update-check.json")
+    current_time = now if now is not None else time.time()
+
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        checked_at = float(cached.get("checked_at", 0))
+        cached_notices = cached.get("notices", [])
+        if (
+            current_time - checked_at < max_age_hours * 3600
+            and isinstance(cached_notices, list)
+        ):
+            return [str(item) for item in cached_notices]
+    except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+
     notices: list[str] = []
 
     try:
@@ -109,10 +267,23 @@ def preflight_checks() -> list[str]:
         if update_info:
             latest = update_info.version or update_info.tag
             notices.append(
-                f"[!] 检测到 yt-dlp 可更新：当前 {ytdlp_version}，最新 {latest}。建议运行 `pip install --upgrade yt-dlp`。"
+                f"[!] 检测到 yt-dlp 可更新：当前 {ytdlp_version}，最新 {latest}。"
+                "建议运行 `uv lock --upgrade-package yt-dlp && uv sync`。"
             )
     except Exception as exc:
         logging.debug("预检 yt-dlp 更新失败: %s", exc)
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(
+            json.dumps(
+                {"checked_at": current_time, "notices": notices},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logging.debug("写入 yt-dlp 更新检查缓存失败: %s", exc)
 
     return notices
 
@@ -178,7 +349,7 @@ async def generate_note_from_transcript(
     def _do_generate():
         return generator.generate_note(transcript_content, mode_index=mode_index)
 
-    print(f"[i] 正在生成 Note...")
+    print("[i] 正在生成 Note...")
     note_content = await asyncio.to_thread(_do_generate)
 
     note_filename = generate_note_filename(title)
@@ -266,7 +437,8 @@ async def run_pipelines(
 
 async def run_transcript_pipeline(transcript_text: str, outdir: Path, *,
                                   title: str | None = None,
-                                  source_lang: str | None = None) -> None:
+                                  source_lang: str | None = None,
+                                  note_mode: int | None = None) -> None:
     from backend.pipeline import process_transcript_input
 
     async def on_update(evt: dict):
@@ -294,6 +466,15 @@ async def run_transcript_pipeline(transcript_text: str, outdir: Path, *,
         print("\n警告：")
         for item in warnings:
             print(f" - {item}")
+
+    if note_mode is not None and res.get("transcript_file"):
+        print("\n=== 生成 Note ===")
+        await generate_note_from_transcript(
+            transcript_path=outdir / res["transcript_file"],
+            title=res.get("video_title") or title or "untitled",
+            outdir=outdir,
+            mode_index=note_mode,
+        )
 
 
 async def run_watch_mode(
@@ -348,18 +529,19 @@ async def run_watch_mode(
     processed = result['videos_processed']
     failed = found - processed
     sent = result.get("videos_sent", 0)
+    channel_errors = result.get("channel_errors", len(result.get("errors", [])))
 
     return {
+        "channels_checked": result["channels_checked"],
         "found": found,
         "processed": processed,
         "sent": sent,
         "failed": failed,
+        "channel_errors": channel_errors,
     }
 
 
 def main():
-    # 先尝试加载 .env
-    _load_dotenv_if_present()
     # 设置基础日志级别与格式，便于查看内部处理信息
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -374,6 +556,8 @@ def main():
     parser.add_argument("--source-lang", help="指定转录原语言代码（例如 en、zh）")
     parser.add_argument("--model", help="统一覆盖 GEMINI_MODEL 的模型名称")
     parser.add_argument("--continue-on-error", action="store_true", help="批量模式下遇到错误继续处理下一个链接")
+    parser.add_argument("--no-note", action="store_true",
+                        help="跳过 Note 生成，只保留转录稿")
     # Channel monitor options
     parser.add_argument("--watch", "--monitor", action="store_true", dest="watch",
                         help="监控配置的频道并转录新视频")
@@ -383,6 +567,12 @@ def main():
                         help="预览模式：只显示会处理的视频，不实际执行")
     parser.add_argument("--list-channels", action="store_true",
                         help="列出配置的频道并退出")
+    parser.add_argument("--status", action="store_true",
+                        help="显示本地监控状态并退出（不访问网络）")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="清理过期的 .work_* 临时工作目录并退出")
+    parser.add_argument("--cleanup-hours", type=float, default=24,
+                        help="--cleanup 删除多少小时前的工作目录（默认 24）")
     parser.add_argument("--baseline-xiaoyuzhou", action="store_true",
                         help="把已配置小宇宙节目的全部历史单集标记为已处理已发送")
     parser.add_argument("--lookback", type=int, default=None,
@@ -390,6 +580,35 @@ def main():
     parser.add_argument("--note-mode", type=int, choices=range(1, 8), default=None,
                         metavar="N", help="Note 模式 (1-7)，跳过交互选择")
     args = parser.parse_args()
+
+    if args.note_mode is not None and args.no_note:
+        parser.error("--note-mode 和 --no-note 不能同时使用")
+
+    if args.status:
+        try:
+            print_runtime_status(collect_runtime_status(args.config, Path(args.outdir)))
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[!] 无法读取运行状态: {exc}", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)
+
+    if args.cleanup:
+        try:
+            cleanup = cleanup_stale_workdirs(
+                Path(args.outdir), older_than_hours=args.cleanup_hours
+            )
+        except ValueError as exc:
+            print(f"[!] 清理失败: {exc}", file=sys.stderr)
+            sys.exit(2)
+        print(
+            f"[OK] 已清理 {cleanup['removed']} 个工作目录，"
+            f"释放 {cleanup['freed_bytes'] / (1024 ** 2):.1f} MB"
+        )
+        sys.exit(0)
+
+    # 需要运行网络或模型功能时再加载 .env；--help/status/cleanup 保持安静。
+    if not args.list_channels:
+        _load_dotenv_if_present()
 
     if args.baseline_xiaoyuzhou:
         try:
@@ -455,16 +674,21 @@ def main():
                     processed=stats["processed"],
                     sent=stats["sent"],
                     failed=stats["failed"],
+                    channel_errors=stats["channel_errors"],
+                    channels_checked=stats["channels_checked"],
+                    log_path=outdir / "watch.log",
                 )
+            if watch_run_failed(stats, dry_run=args.dry_run):
+                sys.exit(3)
         except FileNotFoundError as e:
-            write_watch_log(0, 0, 0, 0, error=str(e))
+            write_watch_log(0, 0, 0, 0, error=str(e), log_path=outdir / "watch.log")
             print(f"[!] {e}", file=sys.stderr)
             sys.exit(2)
         except KeyboardInterrupt:
             print("\n已取消")
             sys.exit(130)
         except Exception as e:
-            write_watch_log(0, 0, 0, 0, error=str(e))
+            write_watch_log(0, 0, 0, 0, error=str(e), log_path=outdir / "watch.log")
             print(f"[!] 监控失败: {e}", file=sys.stderr)
             sys.exit(3)
         sys.exit(0)
@@ -494,10 +718,12 @@ def main():
     if not use_transcript_mode and not ensure_ffmpeg():
         sys.exit(1)
 
-    print_env_warnings()
+    if not use_transcript_mode or args.note_mode is not None:
+        print_env_warnings()
 
-    for notice in preflight_checks():
-        print(notice)
+    if not use_transcript_mode:
+        for notice in preflight_checks():
+            print(notice)
 
     def _collect_urls_interactively() -> list[str]:
         """交互式收集链接：单行输入，用 ';' 分隔，回车结束。"""
@@ -535,7 +761,9 @@ def main():
 
     # Select note mode
     note_mode: int | None = None
-    if not use_transcript_mode:
+    if use_transcript_mode:
+        note_mode = None if args.no_note else args.note_mode
+    elif not args.no_note:
         if args.note_mode is not None:
             note_mode = args.note_mode
         else:
@@ -558,6 +786,7 @@ def main():
                 outdir=outdir,
                 title=args.title,
                 source_lang=args.source_lang,
+                note_mode=note_mode,
             ))
         else:
             asyncio.run(run_pipelines(
@@ -651,13 +880,15 @@ def perform_storage_check(url: str, outdir: Path) -> dict | None:
 
 
 if __name__ == "__main__":
+    help_requested = any(arg in {"-h", "--help"} for arg in sys.argv[1:])
     try:
         main()
         print(f"[SUCCESS] video_transcriber completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     except SystemExit as e:
         exit_code = e.code if e.code is not None else 0
         if exit_code == 0:
-            print(f"[SUCCESS] video_transcriber completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            if not help_requested:
+                print(f"[SUCCESS] video_transcriber completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         elif exit_code == 130:
             print("[INFO] video_transcriber: interrupted by user")
         else:

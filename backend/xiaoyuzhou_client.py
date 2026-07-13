@@ -7,12 +7,12 @@ import os
 import re
 import tempfile
 import uuid
-from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
-from xml.etree import ElementTree as ET
+
+from defusedxml import ElementTree as ET
 
 import requests
 

@@ -10,7 +10,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 class ProcessedStore:
@@ -35,7 +35,7 @@ class ProcessedStore:
                     return data
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[!] Warning: Failed to load processed store: {e}")
-                print(f"[!] Starting with empty store")
+                print("[!] Starting with empty store")
                 return {"version": 1, "videos": {}, "failures": {}}
         return {"version": 1, "videos": {}, "failures": {}}
 
@@ -72,7 +72,7 @@ class ProcessedStore:
         skip_reason: Optional[str] = None,
     ) -> None:
         """Mark a video as processed and save immediately."""
-        info = {
+        info: dict[str, Any] = {
             "title": title,
             "url": url,
             "channel_name": channel_name,
@@ -174,6 +174,10 @@ class ProcessedStore:
     def count(self) -> int:
         """Return number of processed videos."""
         return len(self._data["videos"])
+
+    def failure_count(self) -> int:
+        """Return number of videos with a pending failure record."""
+        return len(self._data.get("failures", {}))
 
     def cleanup_old(self, max_age_days: int) -> int:
         """

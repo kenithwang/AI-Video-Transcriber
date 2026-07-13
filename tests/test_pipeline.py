@@ -26,7 +26,47 @@ class FakeTranscriber:
         return ("transcript body", "en", [])
 
 
+class FailingTranscriber:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def transcribe(self, audio_path):
+        raise RuntimeError("transcription failed")
+
+
 class PipelineCleanupTests(unittest.TestCase):
+    def test_process_video_cleans_private_work_dir_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_dir = Path(tmp)
+
+            with patch.object(pipeline, "VideoProcessor", FakeVideoProcessor):
+                with patch.object(pipeline, "ObsidianTranscriber", FailingTranscriber):
+                    with self.assertRaisesRegex(RuntimeError, "transcription failed"):
+                        asyncio.run(
+                            pipeline.process_video("https://example.test/v", temp_dir)
+                        )
+
+            self.assertEqual([], list(temp_dir.glob(".work_*")))
+
+    def test_process_video_cleans_private_work_dir_after_persist_failure(self) -> None:
+        async def fail_write(path, content):
+            raise OSError("transcript write failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_dir = Path(tmp)
+
+            with patch.object(pipeline, "VideoProcessor", FakeVideoProcessor):
+                with patch.object(pipeline, "ObsidianTranscriber", FakeTranscriber):
+                    with patch.object(pipeline, "_write_file", fail_write):
+                        with self.assertRaisesRegex(OSError, "transcript write failed"):
+                            asyncio.run(
+                                pipeline.process_video(
+                                    "https://example.test/v", temp_dir
+                                )
+                            )
+
+            self.assertEqual([], list(temp_dir.glob(".work_*")))
+
     def test_process_video_does_not_delete_unrelated_media_in_temp_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             temp_dir = Path(tmp)

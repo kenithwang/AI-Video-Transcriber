@@ -109,6 +109,14 @@ uv run python cli.py --transcript-file path/to/transcript.md --title "My Title"
 uv run python cli.py --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" --keep-audio
 ```
 
+### 只要转录稿，不生成 Note
+
+```bash
+uv run python cli.py --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" --no-note
+```
+
+交互选择 Note 模式时也可以输入 `0` 跳过。使用已有转录文本时，只有显式添加 `--note-mode 1`（或其他模式编号）才会生成 Note。
+
 ## 输出文件在哪
 
 默认都在 `temp/` 目录下。
@@ -187,10 +195,38 @@ uv run python cli.py --watch
 uv run python cli.py --watch --dry-run
 ```
 
+`--dry-run` 不会写入 `.processed_videos.json`。如果频道抓取失败，监控摘要会明确显示频道错误，而不是显示成“没有新视频”。全部待处理视频均失败或所有频道均抓取失败时，命令会返回非零退出码。
+
+### 查看监控状态
+
+```bash
+uv run python cli.py --status
+```
+
+它只读取本地文件，不访问网络，会显示启用频道数、已处理、待发送、失败记录、遗留工作目录和临时目录占用。
+
+### 清理失败任务留下的临时目录
+
+```bash
+# 默认只删除超过 24 小时的 .work_* 目录
+uv run python cli.py --cleanup
+
+# 自定义时间阈值
+uv run python cli.py --cleanup --cleanup-hours 48
+```
+
+该命令不会删除转录稿、Note 或日志。
+
 ## 如果你要改代码
 
 - 入口文件：`cli.py`
 - 核心逻辑：`backend/`
+
+运行测试：
+
+```bash
+uv run --with pytest pytest -q
+```
 
 如果你只是普通使用者，这一节可以忽略。
 

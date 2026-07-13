@@ -95,36 +95,43 @@ async def process_video(
     transcriber = ObsidianTranscriber(segment_seconds=seg_final, parallelism=parallelism)
     warnings: list[str] = []
 
-    # 1) Download + convert
-    status.update({"progress": 10, "message": "downloading video..."})
-    await emit(status)
-    audio_path, video_title = await video_processor.download_and_convert(
-        download_url or url,
-        work_dir,
-        video_info=video_info,
-    )
+    try:
+        # 1) Download + convert
+        status.update({"progress": 10, "message": "downloading video..."})
+        await emit(status)
+        audio_path, video_title = await video_processor.download_and_convert(
+            download_url or url,
+            work_dir,
+            video_info=video_info,
+        )
 
-    status.update({"progress": 35, "message": "video downloaded; transcribing..."})
-    await emit(status)
+        status.update({"progress": 35, "message": "video downloaded; transcribing..."})
+        await emit(status)
 
-    # 2) Transcribe
-    # OpenAI 云端转写（同步调用，封装为线程避免阻塞）
-    import asyncio as _asyncio
-    def _do_transcribe():
-        return transcriber.transcribe(Path(audio_path))
-    raw_script, detected_language, transcribe_warnings = await _asyncio.to_thread(_do_transcribe)
-    warnings.extend(transcribe_warnings)
+        # 2) Transcribe
+        # OpenAI 云端转写（同步调用，封装为线程避免阻塞）
+        import asyncio as _asyncio
 
-    safe_title = _sanitize_title_for_filename(video_title)
-    script_with_title = f"# {video_title}\n\n{raw_script}\n\nsource: {url}\n"
+        def _do_transcribe():
+            return transcriber.transcribe(Path(audio_path))
 
-    # detected_language 已由云端返回；如无则保持 None
+        raw_script, detected_language, transcribe_warnings = await _asyncio.to_thread(_do_transcribe)
+        warnings.extend(transcribe_warnings)
 
-    # 4) Persist files
-    # transcript file
-    transcript_filename = f"transcript_{safe_title}_{short_id}.md"
-    transcript_path = temp_dir / transcript_filename
-    await _write_file(transcript_path, script_with_title)
+        safe_title = _sanitize_title_for_filename(video_title)
+        script_with_title = f"# {video_title}\n\n{raw_script}\n\nsource: {url}\n"
+
+        # detected_language 已由云端返回；如无则保持 None
+
+        # 4) Persist files
+        # transcript file
+        transcript_filename = f"transcript_{safe_title}_{short_id}.md"
+        transcript_path = temp_dir / transcript_filename
+        await _write_file(transcript_path, script_with_title)
+    except BaseException:
+        if not keep_audio:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        raise
 
     # Optional cleanup of downloaded audio and this job's private work directory.
     audio_deleted = False

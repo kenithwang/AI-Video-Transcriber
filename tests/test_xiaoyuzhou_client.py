@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from defusedxml import EntitiesForbidden
+
 from backend.xiaoyuzhou_client import (
     XiaoyuzhouClient,
     parse_podcast_id,
@@ -111,6 +113,14 @@ class XiaoyuzhouClientTests(unittest.TestCase):
         self.assertEqual("a" * 24, episodes[0]["eid"])
         self.assertEqual(3723, episodes[0]["duration"])
         self.assertEqual("https://cdn.test/a.mp3", episodes[0]["audio_url"])
+
+    def test_parse_rss_feed_rejects_entity_definitions(self):
+        malicious_xml = """<?xml version="1.0"?>
+        <!DOCTYPE rss [<!ENTITY payload "expanded">]>
+        <rss><channel><title>&payload;</title></channel></rss>"""
+
+        with self.assertRaises(EntitiesForbidden):
+            parse_rss_episodes(malicious_xml, podcast_id="b" * 24)
 
 
 if __name__ == "__main__":
