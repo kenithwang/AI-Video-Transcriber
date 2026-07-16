@@ -77,6 +77,17 @@ uv run python cli.py --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
 - 开始下载和转录
 - 把结果写到 `temp/` 目录
 
+转录过程中，每个音频分片会独立重试。成功分片会立即保存到
+`temp/.transcription_checkpoints/`；即使程序退出或断电，下次也只会向 Gemini
+提交尚未完成的分片。最终 Markdown 转录稿成功写入后，程序才会清理该断点。
+
+可在 `.env` 中调整：
+
+```env
+TRANSCRIBE_CHUNK_MAX_ATTEMPTS=3
+TRANSCRIBE_RETRY_DELAY_SECONDS=5
+```
+
 ## 常用命令
 
 ### 处理一个视频

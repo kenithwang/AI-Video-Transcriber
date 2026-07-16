@@ -21,6 +21,7 @@ import yaml
 import yt_dlp
 
 from .xiaoyuzhou_client import XiaoyuzhouClient, parse_podcast_id
+from .obsidian_transcriber import TranscriptionIncompleteError
 from .processed_store import ProcessedStore
 from .sync_config import build_rclone_copy_command
 
@@ -769,6 +770,7 @@ class ChannelMonitor:
                 results[video.video_id] = True
 
             except Exception as e:
+                recoverable_transcription = isinstance(e, TranscriptionIncompleteError)
                 error_msg = f"{type(e).__name__}: {e}"
                 print(f"    [!] Failed: {error_msg}")
                 log_failure(video, "转录", error_msg)
@@ -795,7 +797,7 @@ class ChannelMonitor:
                     f"    [!] 失败次数: {failed_attempts}/{self.max_failure_attempts}"
                 )
 
-                if failed_attempts >= self.max_failure_attempts:
+                if failed_attempts >= self.max_failure_attempts and not recoverable_transcription:
                     self.store.mark_processed(
                         video_id=video.video_id,
                         title=video.title,
@@ -807,6 +809,10 @@ class ChannelMonitor:
                     )
                     print(
                         "    [skip] 已连续失败达到阈值，标记为 processed/sent，后续不再重试"
+                    )
+                elif recoverable_transcription:
+                    print(
+                        "    [retry] 分片断点已保存；不会永久跳过，下次仅重试未完成分片"
                     )
 
                 if is_rate_limited(error_msg) and self.rate_limit_cooldown > 0:

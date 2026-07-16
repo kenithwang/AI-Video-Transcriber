@@ -22,8 +22,31 @@ def _create_emitter(on_update: Optional[Callable[[dict], Awaitable[None]]]):
 
 
 async def _write_file(path: Path, content: str) -> None:
-    """异步写入文件。"""
-    await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+    """异步、原子地写入文件，避免断电留下半份转录。"""
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+
+    def _write_and_replace() -> None:
+        try:
+            with temp_path.open("w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, path)
+            try:
+                descriptor = os.open(path.parent, os.O_RDONLY)
+            except OSError:
+                descriptor = None
+            if descriptor is not None:
+                try:
+                    os.fsync(descriptor)
+                except OSError:
+                    pass
+                finally:
+                    os.close(descriptor)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    await asyncio.to_thread(_write_and_replace)
 
 
 def _sanitize_title_for_filename(title: str, max_bytes: int = 200) -> str:
@@ -92,7 +115,12 @@ async def process_video(
         except Exception:
             seg_final = 28800
 
-    transcriber = ObsidianTranscriber(segment_seconds=seg_final, parallelism=parallelism)
+    checkpoint_root = temp_dir / ".transcription_checkpoints"
+    transcriber = ObsidianTranscriber(
+        segment_seconds=seg_final,
+        parallelism=parallelism,
+        checkpoint_root=checkpoint_root,
+    )
     warnings: list[str] = []
 
     try:
@@ -113,7 +141,7 @@ async def process_video(
         import asyncio as _asyncio
 
         def _do_transcribe():
-            return transcriber.transcribe(Path(audio_path))
+            return transcriber.transcribe(Path(audio_path), checkpoint_key=url)
 
         raw_script, detected_language, transcribe_warnings = await _asyncio.to_thread(_do_transcribe)
         warnings.extend(transcribe_warnings)
@@ -128,6 +156,7 @@ async def process_video(
         transcript_filename = f"transcript_{safe_title}_{short_id}.md"
         transcript_path = temp_dir / transcript_filename
         await _write_file(transcript_path, script_with_title)
+        transcriber.clear_checkpoint(url)
     except BaseException:
         if not keep_audio:
             shutil.rmtree(work_dir, ignore_errors=True)

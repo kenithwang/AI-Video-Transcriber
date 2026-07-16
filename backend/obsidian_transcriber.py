@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import re
 import shutil
+import hashlib
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
@@ -13,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from google import genai
 from google.genai import types
+
+from .transcription_checkpoint import TranscriptionCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,26 @@ class AudioChunk:
     @property
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
+
+
+@dataclass
+class ChunkResult:
+    text: str = ''
+    finish_reason: str = 'UNKNOWN'
+    finish_message: str = ''
+    error: str = ''
+    attempts: int = 1
+
+
+class TranscriptionIncompleteError(RuntimeError):
+    """A recoverable error indicating that some chunks still need transcription."""
+
+    def __init__(self, failed_chunks: List[int]):
+        self.failed_chunks = sorted(failed_chunks)
+        super().__init__(
+            f"转写过程中 {len(self.failed_chunks)} 个分片失败: "
+            f"{self.failed_chunks}，成功分片已保存，稍后将只重试失败分片"
+        )
 
 
 def _guess_language(text: str) -> Optional[str]:
@@ -67,7 +91,12 @@ class ObsidianTranscriber:
     # 设为 20 分钟以确保完整转录
     RELIABLE_TRANSCRIBE_DURATION = 20 * 60  # 1200 秒
 
-    def __init__(self, segment_seconds: int = 28800, parallelism: Optional[int] = None):
+    def __init__(
+        self,
+        segment_seconds: int = 28800,
+        parallelism: Optional[int] = None,
+        checkpoint_root: Optional[Path] = None,
+    ):
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise RuntimeError('未设置 GEMINI_API_KEY')
@@ -90,6 +119,9 @@ class ObsidianTranscriber:
         if self.parallelism < 1:
             cpu_default = os.cpu_count() or 4
             self.parallelism = min(6, max(3, cpu_default // 2 or 1))
+        self.max_chunk_attempts = self._positive_int_env('TRANSCRIBE_CHUNK_MAX_ATTEMPTS', 3)
+        self.retry_delay_seconds = self._nonnegative_float_env('TRANSCRIBE_RETRY_DELAY_SECONDS', 5.0)
+        self.checkpoint_root = Path(checkpoint_root) if checkpoint_root is not None else None
 
         self._system_instruction = (
             'You are a professional multilingual transcriber. Your task is to transcribe the audio file VERBATIM (word-for-word) into text.\n\n'
@@ -123,6 +155,20 @@ class ObsidianTranscriber:
         self._model_queue: Queue = Queue(maxsize=self._max_models)
         self._models_created = 0
         self._prime_model()
+
+    @staticmethod
+    def _positive_int_env(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.getenv(name, str(default))))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _nonnegative_float_env(name: str, default: float) -> float:
+        try:
+            return max(0.0, float(os.getenv(name, str(default))))
+        except (TypeError, ValueError):
+            return default
 
     def _ffprobe_duration(self, path: Path) -> float:
         try:
@@ -244,7 +290,7 @@ class ObsidianTranscriber:
         }
         return mime_map.get(ext, 'audio/mp4')  # 默认使用 audio/mp4
 
-    def _gen_text(self, chunk: AudioChunk) -> str:
+    def _gen_text(self, chunk: AudioChunk) -> ChunkResult:
         """使用 File API 上传音频并转写（支持最大 2GB / 8.4 小时）。"""
         model = self._acquire_model()
         uploaded = None
@@ -257,7 +303,7 @@ class ObsidianTranscriber:
                 contents=[uploaded, self._transcribe_prompt],
                 config=self._generation_config
             )
-            return self._extract(resp)
+            return self._extract_response(resp)
         except Exception as e:
             logger.warning(f'File API 失败，尝试内联方式: {chunk.path.name}: {e}')
             # Fallback: 内联数据方式（限制 20MB）
@@ -271,10 +317,14 @@ class ObsidianTranscriber:
                     contents=[{"mime_type": mime_type, "data": data}, self._transcribe_prompt],
                     config=self._generation_config
                 )
-                return self._extract(resp)
+                return self._extract_response(resp)
             except Exception as e2:
                 logger.error(f'内联方式也失败: {chunk.path.name}: {e2}')
-                return ''
+                return ChunkResult(
+                    finish_reason='ERROR',
+                    finish_message=str(e2),
+                    error=f'File API: {e}; inline: {e2}',
+                )
         finally:
             self._release_model(model)
             # 清理上传的文件（File API 文件会保留 2 天）
@@ -313,10 +363,28 @@ class ObsidianTranscriber:
             # Queue may be full if models were created opportunistically; drop gracefully.
             pass
 
-    def _extract(self, resp) -> str:
+    @staticmethod
+    def _normalize_finish_reason(value) -> str:
+        if value is None:
+            return 'UNKNOWN'
+        name = getattr(value, 'name', None)
+        if name:
+            return str(name)
+        raw = str(value)
+        if '.' in raw and raw.split('.', 1)[0].lower().endswith('finishreason'):
+            return raw.rsplit('.', 1)[-1]
+        return raw or 'UNKNOWN'
+
+    def _extract_response(self, resp) -> ChunkResult:
         try:
             acc = []
-            for cand in getattr(resp, 'candidates', []) or []:
+            candidates = getattr(resp, 'candidates', []) or []
+            finish_reason = 'UNKNOWN'
+            finish_message = ''
+            for position, cand in enumerate(candidates):
+                if position == 0:
+                    finish_reason = self._normalize_finish_reason(getattr(cand, 'finish_reason', None))
+                    finish_message = str(getattr(cand, 'finish_message', '') or '')
                 content = getattr(cand, 'content', None)
                 parts = getattr(content, 'parts', None)
                 if parts:
@@ -324,9 +392,82 @@ class ObsidianTranscriber:
                         t = getattr(p, 'text', None)
                         if t:
                             acc.append(t)
-            return '\n'.join(acc).strip()
-        except Exception:
-            return ''
+            return ChunkResult(
+                text='\n'.join(acc).strip(),
+                finish_reason=finish_reason,
+                finish_message=finish_message,
+            )
+        except Exception as e:
+            return ChunkResult(finish_reason='PARSE_ERROR', finish_message=str(e), error=str(e))
+
+    def _extract(self, resp) -> str:
+        """Backward-compatible text-only response extraction."""
+        return self._extract_response(resp).text
+
+    @staticmethod
+    def _is_successful_result(result: ChunkResult) -> bool:
+        return bool(result.text.strip()) and result.finish_reason in {
+            'STOP',
+            'UNKNOWN',
+            'FINISH_REASON_UNSPECIFIED',
+        }
+
+    def _transcribe_chunk_with_retry(self, chunk: AudioChunk, index: int) -> ChunkResult:
+        last = ChunkResult(error='未执行转写', attempts=0)
+        for attempt in range(1, self.max_chunk_attempts + 1):
+            try:
+                result = self._gen_text(chunk)
+            except Exception as e:
+                result = ChunkResult(
+                    finish_reason='ERROR',
+                    finish_message=str(e),
+                    error=str(e),
+                )
+            result.attempts = attempt
+            last = result
+            logger.info(
+                '[obsidian] 分片 %s 尝试 %s/%s: finish_reason=%s, finish_message=%s, text_chars=%s',
+                index,
+                attempt,
+                self.max_chunk_attempts,
+                result.finish_reason,
+                result.finish_message or '-',
+                len(result.text),
+            )
+            if self._is_successful_result(result):
+                return result
+            if not result.error:
+                result.error = (
+                    'empty response'
+                    if not result.text.strip()
+                    else f'non-success finish reason: {result.finish_reason}'
+                )
+            if attempt < self.max_chunk_attempts:
+                delay = self.retry_delay_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    '[obsidian] 分片 %s 无有效文本，将在 %.1f 秒后独立重试',
+                    index,
+                    delay,
+                )
+                if delay:
+                    time.sleep(delay)
+        return last
+
+    def _checkpoint_signature(self, chunks: List[AudioChunk]) -> dict:
+        prompt = f'{self._system_instruction}\n{self._transcribe_prompt}'
+        return {
+            'model': self.model_name,
+            'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
+            'segment_seconds': self.segment_seconds,
+            'chunks': [
+                {'start': round(chunk.start, 3), 'end': round(chunk.end, 3)}
+                for chunk in chunks
+            ],
+        }
+
+    def clear_checkpoint(self, checkpoint_key: str) -> None:
+        if self.checkpoint_root is not None:
+            TranscriptionCheckpoint(self.checkpoint_root, checkpoint_key).clear()
 
     def _fmt_duration(self, seconds: float) -> str:
         try:
@@ -346,7 +487,12 @@ class ObsidianTranscriber:
         except Exception:
             return f"{size_bytes} bytes"
 
-    def transcribe(self, audio_path: Path, language: Optional[str] = None) -> Tuple[str, Optional[str], List[str]]:
+    def transcribe(
+        self,
+        audio_path: Path,
+        language: Optional[str] = None,
+        checkpoint_key: Optional[str] = None,
+    ) -> Tuple[str, Optional[str], List[str]]:
         p = Path(audio_path)
         if not p.exists():
             raise FileNotFoundError(f'音频文件不存在: {p}')
@@ -367,31 +513,69 @@ class ObsidianTranscriber:
             logger.info(f"[obsidian] 切片完成，共 {len(chunks)} 段，准备并行转写（并行度={self.parallelism}）")
 
         try:
-            texts_by_index: dict[int, str] = {}
+            checkpoint = None
+            if checkpoint_key and self.checkpoint_root is not None:
+                checkpoint = TranscriptionCheckpoint(self.checkpoint_root, checkpoint_key)
+                checkpoint.prepare(self._checkpoint_signature(chunks))
+            texts_by_index: dict[int, str] = checkpoint.load_completed_texts() if checkpoint else {}
+            if texts_by_index:
+                logger.info(
+                    '[obsidian] 从断点恢复 %s/%s 个已完成分片，仅提交剩余分片',
+                    len(texts_by_index),
+                    len(chunks),
+                )
             failed_chunks: List[int] = []
             # 在线程池中并行处理每个分片，保持输出顺序
             with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
                 futures = {}
                 for idx, chunk in enumerate(chunks, 1):
+                    if idx in texts_by_index:
+                        continue
                     logger.info(
                         f"[obsidian] 排队分片 {idx}/{len(chunks)}: {chunk.path.name} ~{self._fmt_duration(chunk.duration)}"
                     )
-                    fut = ex.submit(self._gen_text, chunk)
+                    fut = ex.submit(self._transcribe_chunk_with_retry, chunk, idx)
                     futures[fut] = idx
 
                 done_count = 0
                 for fut in as_completed(futures):
                     idx = futures[fut]
                     try:
-                        t = fut.result()
+                        result = fut.result()
                     except Exception as e:
                         logger.error(f"[obsidian] 分片 {idx} 处理异常: {e}")
-                        t = ''
-                    if t:
-                        texts_by_index[idx] = t
+                        result = ChunkResult(
+                            finish_reason='ERROR',
+                            finish_message=str(e),
+                            error=str(e),
+                            attempts=self.max_chunk_attempts,
+                        )
+                    if self._is_successful_result(result):
+                        texts_by_index[idx] = result.text
+                        if checkpoint:
+                            checkpoint.record_success(
+                                idx,
+                                result.text,
+                                attempts=result.attempts,
+                                finish_reason=result.finish_reason,
+                                finish_message=result.finish_message,
+                            )
                     else:
-                        logger.warning(f"[obsidian] 分片无文本输出: chunk_{idx:03d}.wav")
+                        logger.warning(
+                            '[obsidian] 分片未得到完整有效输出: chunk_%03d.wav, finish_reason=%s, finish_message=%s',
+                            idx,
+                            result.finish_reason,
+                            result.finish_message or '-',
+                        )
                         failed_chunks.append(idx)
+                        if checkpoint:
+                            checkpoint.record_failure(
+                                idx,
+                                attempts=result.attempts,
+                                finish_reason=result.finish_reason,
+                                finish_message=result.finish_message,
+                                error=result.error,
+                            )
                     done_count += 1
                     if done_count % max(1, len(chunks)//10) == 0 or done_count == len(chunks):
                         logger.info(f"[obsidian] 并行转写进度: {done_count}/{len(chunks)} 完成")
@@ -399,10 +583,10 @@ class ObsidianTranscriber:
             # 收集警告信息
             warnings: List[str] = []
             if failed_chunks:
-                failed_chunks.sort()
-                raise RuntimeError(
-                    f"转写过程中 {len(failed_chunks)} 个分片失败: {failed_chunks}，未生成不完整转录"
-                )
+                raise TranscriptionIncompleteError(failed_chunks)
+
+            if checkpoint:
+                checkpoint.mark_complete()
 
             # 按原顺序合并
             texts_ordered: List[str] = [texts_by_index.get(i, '') for i in range(1, len(chunks)+1)]

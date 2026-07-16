@@ -119,11 +119,13 @@ What happens next:
 - The program will ask you to choose a **Note mode** by number.
 - Then it downloads, transcribes, and writes the result into `temp/`.
 - Progress is shown directly in the terminal.
+- Each failed audio chunk is retried independently. Completed chunks are checkpointed under `temp/.transcription_checkpoints/`, so a restart only submits unfinished chunks to Gemini. The checkpoint is removed after the final transcript is written successfully.
 
 中文：
 - 程序启动后，会先让你输入一个 **Note 模式编号**
 - 然后它会开始下载、转录，并把结果写到 `temp/`
 - 终端里会直接显示进度
+- 单个音频分片失败时只重试该分片；成功分片会保存到 `temp/.transcription_checkpoints/`，程序重启后只提交未完成分片。最终转录稿成功写入后才会删除断点。
 
 ## Most Common Commands
 

@@ -19,18 +19,26 @@ class FakeVideoProcessor:
 
 
 class FakeTranscriber:
-    def __init__(self, *args, **kwargs):
-        pass
+    checkpoint_root = None
+    transcribed_key = None
+    cleared_keys = []
 
-    def transcribe(self, audio_path):
+    def __init__(self, *args, **kwargs):
+        FakeTranscriber.checkpoint_root = kwargs.get("checkpoint_root")
+
+    def transcribe(self, audio_path, checkpoint_key=None):
+        FakeTranscriber.transcribed_key = checkpoint_key
         return ("transcript body", "en", [])
+
+    def clear_checkpoint(self, checkpoint_key):
+        FakeTranscriber.cleared_keys.append(checkpoint_key)
 
 
 class FailingTranscriber:
     def __init__(self, *args, **kwargs):
         pass
 
-    def transcribe(self, audio_path):
+    def transcribe(self, audio_path, checkpoint_key=None):
         raise RuntimeError("transcription failed")
 
 
@@ -54,6 +62,7 @@ class PipelineCleanupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             temp_dir = Path(tmp)
+            FakeTranscriber.cleared_keys = []
 
             with patch.object(pipeline, "VideoProcessor", FakeVideoProcessor):
                 with patch.object(pipeline, "ObsidianTranscriber", FakeTranscriber):
@@ -66,6 +75,7 @@ class PipelineCleanupTests(unittest.TestCase):
                             )
 
             self.assertEqual([], list(temp_dir.glob(".work_*")))
+            self.assertEqual([], FakeTranscriber.cleared_keys)
 
     def test_process_video_does_not_delete_unrelated_media_in_temp_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,6 +92,7 @@ class PipelineCleanupTests(unittest.TestCase):
     def test_process_video_downloads_media_url_but_preserves_public_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             temp_dir = Path(tmp)
+            FakeTranscriber.cleared_keys = []
             public_url = "https://www.xiaoyuzhoufm.com/episode/" + "a" * 24
             media_url = "https://cdn.test/episode.mp3"
 
@@ -98,6 +109,9 @@ class PipelineCleanupTests(unittest.TestCase):
             transcript = (temp_dir / result["transcript_file"]).read_text(encoding="utf-8")
             self.assertEqual(media_url, FakeVideoProcessor.last_url)
             self.assertIn(f"source: {public_url}", transcript)
+            self.assertEqual(temp_dir / ".transcription_checkpoints", FakeTranscriber.checkpoint_root)
+            self.assertEqual(public_url, FakeTranscriber.transcribed_key)
+            self.assertEqual([public_url], FakeTranscriber.cleared_keys)
 
 
 if __name__ == "__main__":
