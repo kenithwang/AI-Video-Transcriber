@@ -91,6 +91,63 @@ channels:
                     config.write_text(content, encoding="utf-8")
                     with self.assertRaisesRegex(ValueError, "Invalid channel configuration"):
                         ChannelMonitor(config)
+    def test_digest_success_supersedes_stale_failure_entries(self) -> None:
+        import json
+
+        from backend.channel_monitor import VideoDigestEntry, VideoDigestFailure
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            monitor = ChannelMonitor(self._config(root))
+            monitor._digest_path = root / "digest.json"
+
+            # Stale failure from a previous run (e.g. TranscriptionIncompleteError)
+            monitor._digest_path.write_text(
+                json.dumps({
+                    "processed": {},
+                    "failed": {
+                        "vid1": {
+                            "video_id": "vid1",
+                            "title": "Video 1",
+                            "channel": "Demo",
+                            "url": "https://example.test/vid1",
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "error": "TranscriptionIncompleteError: ...",
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            # Same-run retry: video failed earlier, then succeeded
+            monitor._digest_failed.append(VideoDigestFailure(
+                video_id="vid2",
+                title="Video 2",
+                channel="Demo",
+                url="https://example.test/vid2",
+                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                error="TranscriptionIncompleteError: ...",
+            ))
+            monitor._digest_failed = [
+                f for f in monitor._digest_failed if f.video_id != "vid2"
+            ]
+            for vid in ("vid1", "vid2"):
+                monitor._digest_processed.append(VideoDigestEntry(
+                    video_id=vid,
+                    title=f"Video {vid}",
+                    channel="Demo",
+                    url=f"https://example.test/{vid}",
+                    timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    summary="ok",
+                    note_file="",
+                ))
+
+            monitor._save_digest()
+
+            saved = json.loads(monitor._digest_path.read_text(encoding="utf-8"))
+            self.assertIn("vid1", saved["processed"])
+            self.assertIn("vid2", saved["processed"])
+            self.assertEqual({}, saved["failed"])
 
 
 if __name__ == "__main__":

@@ -233,6 +233,12 @@ class ChannelMonitor:
         for failure_entry in self._digest_failed:
             digest["failed"][failure_entry.video_id] = asdict(failure_entry)
 
+        # A processed video supersedes any stale failure entry from an
+        # earlier run (e.g. TranscriptionIncompleteError later resumed to
+        # success), so the email no longer reports it as failed.
+        for video_id in digest["processed"]:
+            digest["failed"].pop(video_id, None)
+
         # Cleanup entries older than 3 days
         removed = self._cleanup_old_digest_entries(digest, max_age_days=3)
         if removed > 0:
@@ -747,7 +753,12 @@ class ChannelMonitor:
                     except Exception as e:
                         print(f"    [!] Brief summary failed: {e}")
 
-                # Add to digest
+                # Add to digest; a success supersedes any earlier failure for
+                # this video (e.g. a resumed transcription that failed in a
+                # previous run), so it won't be reported as failed in email.
+                self._digest_failed = [
+                    f for f in self._digest_failed if f.video_id != video.video_id
+                ]
                 self._digest_processed.append(VideoDigestEntry(
                     video_id=video.video_id,
                     title=video.title,
