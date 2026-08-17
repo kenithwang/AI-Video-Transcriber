@@ -13,9 +13,7 @@ from threading import Lock
 from typing import Optional, Tuple, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from google import genai
-from google.genai import types
-
+from .ai_client import OpenRouterClient
 from .transcription_checkpoint import TranscriptionCheckpoint
 
 logger = logging.getLogger(__name__)
@@ -75,12 +73,11 @@ def _guess_language(text: str) -> Optional[str]:
 
 
 class ObsidianTranscriber:
-    """基于 Gemini File API 的转写器。
+    """基于 OpenRouter 多模态接口的转写器。
 
     思路：
-    - 使用 File API 上传音频（支持最大 2GB / 8.4 小时）；
+    - 通过 OpenRouter chat/completions 发送 base64 音频；
     - 如果音频超过可靠转录时长，进行切片处理以避免截断；
-    - 通过 google-generativeai 调用模型进行转写；
     - 仅返回纯文本；最后拼接为一份完整的逐字稿。
     """
 
@@ -97,14 +94,8 @@ class ObsidianTranscriber:
         parallelism: Optional[int] = None,
         checkpoint_root: Optional[Path] = None,
     ):
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise RuntimeError('未设置 GEMINI_API_KEY')
-        self.client = genai.Client(api_key=api_key)
-        self.model_name = os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview')
-        # google-genai uses short names
-        if self.model_name.startswith('models/'):
-            self.model_name = self.model_name.split('/', 1)[-1]
+        self.client = OpenRouterClient()
+        self.model_name = self.client.model
         self.segment_seconds = segment_seconds
         # 并行度：优先读取环境变量 TRANSCRIBE_CONCURRENCY/OBSIDIAN_CONCURRENCY
         if parallelism is None:
@@ -115,11 +106,10 @@ class ObsidianTranscriber:
                 self.parallelism = 0
         else:
             self.parallelism = int(parallelism)
-        # 合理默认：0或<1 则根据CPU与网络取一个小值（例如3）
+        # OpenRouter 大音频并发容易 502；默认只跑 2 路
         if self.parallelism < 1:
-            cpu_default = os.cpu_count() or 4
-            self.parallelism = min(6, max(3, cpu_default // 2 or 1))
-        self.max_chunk_attempts = self._positive_int_env('TRANSCRIBE_CHUNK_MAX_ATTEMPTS', 3)
+            self.parallelism = 2
+        self.max_chunk_attempts = self._positive_int_env('TRANSCRIBE_CHUNK_MAX_ATTEMPTS', 5)
         self.retry_delay_seconds = self._nonnegative_float_env('TRANSCRIBE_RETRY_DELAY_SECONDS', 5.0)
         self.checkpoint_root = Path(checkpoint_root) if checkpoint_root is not None else None
 
@@ -145,11 +135,8 @@ class ObsidianTranscriber:
             'Do NOT skip or truncate any part. Do NOT summarize. '
             'Include every single word spoken. Output only the complete transcript text.'
         )
-        self._generation_config = types.GenerateContentConfig(
-            temperature=0.0,
-            max_output_tokens=65536,
-            system_instruction=self._system_instruction,
-        )
+        self._generation_temperature = 0.0
+        self._generation_max_tokens = 65536
         self._model_lock = Lock()
         self._max_models = max(1, self.parallelism)
         self._model_queue: Queue = Queue(maxsize=self._max_models)
@@ -247,10 +234,15 @@ class ObsidianTranscriber:
         if not cuts:
             raise RuntimeError('音频切分失败，未生成片段')
 
+        mp3_args = ['-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '64k']
         if len(cuts) == 1 and abs(cuts[0][0]) < 1e-3 and abs(cuts[0][1] - duration) < 1e-3:
-            target = outdir / 'chunk_001.wav'
-            shutil.copy2(norm_wav, target)
+            target = outdir / 'chunk_001.mp3'
+            subprocess.check_call([
+                'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+                '-i', str(norm_wav), *mp3_args, str(target),
+            ])
             files.append(AudioChunk(target, cuts[0][0], cuts[0][1]))
+            norm_wav.unlink(missing_ok=True)
             return files, workdir
 
         segment_points = ','.join(f"{end:.3f}" for _, end in cuts[:-1])
@@ -261,12 +253,13 @@ class ObsidianTranscriber:
             '-segment_times', segment_points,
             '-segment_start_number', '1',
             '-reset_timestamps', '1',
-            '-c', 'copy',
-            str(outdir / 'chunk_%03d.wav'),
+            *mp3_args,
+            str(outdir / 'chunk_%03d.mp3'),
         ]
         subprocess.check_call(cmd_cut)
+        norm_wav.unlink(missing_ok=True)
 
-        produced = sorted(outdir.glob('chunk_*.wav'))
+        produced = sorted(outdir.glob('chunk_*.mp3'))
         if len(produced) != len(cuts):
             raise RuntimeError(f'分片数量不匹配，期望 {len(cuts)} 实际 {len(produced)}')
 
@@ -276,63 +269,31 @@ class ObsidianTranscriber:
             ordered.append(AudioChunk(src, start, end))
         return ordered, workdir
 
-    def _get_mime_type(self, path: Path) -> str:
-        """根据文件扩展名返回正确的 MIME 类型。"""
-        ext = path.suffix.lower()
-        mime_map = {
-            '.wav': 'audio/wav',
-            '.mp3': 'audio/mpeg',
-            '.m4a': 'audio/mp4',
-            '.aac': 'audio/aac',
-            '.ogg': 'audio/ogg',
-            '.flac': 'audio/flac',
-            '.webm': 'audio/webm',
-        }
-        return mime_map.get(ext, 'audio/mp4')  # 默认使用 audio/mp4
-
     def _gen_text(self, chunk: AudioChunk) -> ChunkResult:
-        """使用 File API 上传音频并转写（支持最大 2GB / 8.4 小时）。"""
+        """通过 OpenRouter 发送音频并转写。"""
         model = self._acquire_model()
-        uploaded = None
         try:
-            # 优先使用 File API（支持更大文件，最大 2GB）
-            uploaded = self.client.files.upload(file=str(chunk.path))
-            # 必须同时传递音频文件和文本提示词
-            resp = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[uploaded, self._transcribe_prompt],
-                config=self._generation_config
+            result = self.client.generate_audio(
+                chunk.path,
+                self._transcribe_prompt,
+                system=self._system_instruction,
+                temperature=self._generation_temperature,
+                max_tokens=self._generation_max_tokens,
             )
-            return self._extract_response(resp)
+            return ChunkResult(
+                text=result.text,
+                finish_reason=result.finish_reason,
+                finish_message=result.finish_message,
+            )
         except Exception as e:
-            logger.warning(f'File API 失败，尝试内联方式: {chunk.path.name}: {e}')
-            # Fallback: 内联数据方式（限制 20MB）
-            try:
-                with chunk.path.open('rb') as f:
-                    data = f.read()
-                # 使用正确的 MIME 类型
-                mime_type = self._get_mime_type(chunk.path)
-                resp = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=[{"mime_type": mime_type, "data": data}, self._transcribe_prompt],
-                    config=self._generation_config
-                )
-                return self._extract_response(resp)
-            except Exception as e2:
-                logger.error(f'内联方式也失败: {chunk.path.name}: {e2}')
-                return ChunkResult(
-                    finish_reason='ERROR',
-                    finish_message=str(e2),
-                    error=f'File API: {e}; inline: {e2}',
-                )
+            logger.error(f'OpenRouter 转写失败: {chunk.path.name}: {e}')
+            return ChunkResult(
+                finish_reason='ERROR',
+                finish_message=str(e),
+                error=str(e),
+            )
         finally:
             self._release_model(model)
-            # 清理上传的文件（File API 文件会保留 2 天）
-            if uploaded and uploaded.name:
-                try:
-                    self.client.files.delete(name=uploaded.name)
-                except Exception:
-                    pass
 
     def _build_model(self):
         # In the new google-genai SDK, we don't need to build model instances.
@@ -562,8 +523,8 @@ class ObsidianTranscriber:
                             )
                     else:
                         logger.warning(
-                            '[obsidian] 分片未得到完整有效输出: chunk_%03d.wav, finish_reason=%s, finish_message=%s',
-                            idx,
+                            '[obsidian] 分片未得到完整有效输出: %s, finish_reason=%s, finish_message=%s',
+                            chunks[idx - 1].path.name,
                             result.finish_reason,
                             result.finish_message or '-',
                         )

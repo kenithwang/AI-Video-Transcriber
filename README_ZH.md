@@ -60,7 +60,7 @@ cp .env.example .env
 然后打开 `.env`，只需要先填这一行：
 
 ```env
-GEMINI_API_KEY=your_api_key_here
+OPENROUTER_API_KEY=your_api_key_here
 ```
 
 别的配置如果你暂时不懂，可以先不改。
@@ -143,7 +143,7 @@ uv run python cli.py --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" --no-
 
 ## 常见问题
 
-### 1. 提示没设置 `GEMINI_API_KEY`
+### 1. 提示没设置 `OPENROUTER_API_KEY`
 
 说明你还没有在 `.env` 里填 API key。
 

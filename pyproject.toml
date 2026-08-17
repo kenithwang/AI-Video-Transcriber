@@ -1,11 +1,10 @@
 [project]
 name = "ai-video-transcriber"
 version = "0.1.0"
-description = "AI-powered video transcription tool using yt-dlp and Google Gemini"
+description = "AI-powered video transcription tool using yt-dlp and OpenRouter"
 requires-python = ">=3.13"
 dependencies = [
     "yt-dlp>=2024.12.13",
-    "google-genai>=0.2.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
     "requests>=2.32.0",

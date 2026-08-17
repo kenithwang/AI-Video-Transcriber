@@ -142,41 +142,23 @@ class ChannelMonitor:
 
     def _generate_brief_summary(self, transcript: str) -> str:
         """Generate a brief summary (150-300 chars) from transcript."""
-        from google import genai
-        from google.genai import types
+        from .ai_client import OpenRouterClient
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
+        if not os.getenv("OPENROUTER_API_KEY"):
             return ""
-
-        client = genai.Client(api_key=api_key)
-        model_name = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
-        if model_name.startswith("models/"):
-            model_name = model_name.split("/", 1)[-1]
 
         # Truncate transcript to avoid token limits (use first 8000 chars)
         truncated = transcript[:8000] if len(transcript) > 8000 else transcript
         prompt = BRIEF_SUMMARY_PROMPT.format(transcript=truncated)
 
         try:
-            resp = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=30000,
-                ),
+            client = OpenRouterClient()
+            resp = client.generate_text(
+                prompt,
+                temperature=0.3,
+                max_tokens=30000,
             )
-            # Extract text from response
-            for cand in getattr(resp, "candidates", []) or []:
-                content = getattr(cand, "content", None)
-                parts = getattr(content, "parts", None)
-                if parts:
-                    for p in parts:
-                        t = getattr(p, "text", None)
-                        if t:
-                            return t.strip()
-            return ""
+            return resp.text.strip()
         except Exception as e:
             print(f"    [!] Brief summary generation failed: {e}")
             return ""

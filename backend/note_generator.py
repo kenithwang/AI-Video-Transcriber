@@ -2,36 +2,25 @@
 Note generator module.
 Takes transcript and generates structured notes based on selected prompt mode.
 """
-import os
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai import types
-
+from .ai_client import OpenRouterClient
 from .prompt_loader import get_prompt_by_index, get_prompt_by_key, list_modes
 
 logger = logging.getLogger(__name__)
 
 
 class NoteGenerator:
-    """Generate structured notes from transcript using Gemini."""
+    """Generate structured notes from transcript using OpenRouter."""
 
     def __init__(self):
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise RuntimeError('未设置 GEMINI_API_KEY')
-        self.client = genai.Client(api_key=api_key)
-        self.model_name = os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview')
-        if self.model_name.startswith('models/'):
-            self.model_name = self.model_name.split('/', 1)[-1]
-
-        self._generation_config = types.GenerateContentConfig(
-            temperature=0.2,
-            max_output_tokens=65536,
-        )
+        self.client = OpenRouterClient()
+        self.model_name = self.client.model
+        self._generation_temperature = 0.2
+        self._generation_max_tokens = 65536
 
         # Load transcript formatter prompt
         self._transcript_formatter_prompt = self._load_transcript_formatter_prompt()
@@ -91,12 +80,12 @@ class NoteGenerator:
         summary_prompt = self._prepare_summary_prompt(prompt_template, transcript)
 
         try:
-            resp = self.client.models.generate_content(
-                model=self.model_name,
-                contents=summary_prompt,
-                config=self._generation_config
+            resp = self.client.generate_text(
+                summary_prompt,
+                temperature=self._generation_temperature,
+                max_tokens=self._generation_max_tokens,
             )
-            summary_part = self._extract_text(resp)
+            summary_part = resp.text
             logger.info(f"[note_generator] 阶段1完成，摘要长度: {len(summary_part)} 字符")
         except Exception as e:
             logger.error(f"[note_generator] 阶段1失败: {e}")
@@ -113,22 +102,6 @@ class NoteGenerator:
         logger.info(f"[note_generator] 生成完成，总长度: {len(full_note)} 字符")
 
         return full_note
-
-    def _extract_text(self, resp) -> str:
-        """Extract text from Gemini response."""
-        try:
-            acc = []
-            for cand in getattr(resp, 'candidates', []) or []:
-                content = getattr(cand, 'content', None)
-                parts = getattr(content, 'parts', None)
-                if parts:
-                    for p in parts:
-                        t = getattr(p, 'text', None)
-                        if t:
-                            acc.append(t)
-            return '\n'.join(acc).strip()
-        except Exception:
-            return ''
 
     def _prepare_summary_prompt(self, prompt_template: str, transcript: str) -> str:
         """Prepare prompt for Stage 1 (summary generation only, no transcript output)."""
@@ -190,19 +163,13 @@ class NoteGenerator:
             '{transcript_placeholder}', raw_transcript
         )
 
-        # Use lower temperature for faithful transcription
-        format_config = types.GenerateContentConfig(
-            temperature=0.0,
-            max_output_tokens=65536,
-        )
-
         try:
-            resp = self.client.models.generate_content(
-                model=self.model_name,
-                contents=format_prompt,
-                config=format_config
+            resp = self.client.generate_text(
+                format_prompt,
+                temperature=0.0,
+                max_tokens=self._generation_max_tokens,
             )
-            formatted = self._extract_text(resp)
+            formatted = resp.text
             if formatted:
                 return formatted
             else:

@@ -37,8 +37,8 @@ def ensure_ffmpeg():
 
 
 def print_env_warnings():
-    if not os.getenv("GEMINI_API_KEY"):
-        print("[!] 未设置 GEMINI_API_KEY：无法进行云端转写。")
+    if not os.getenv("OPENROUTER_API_KEY"):
+        print("[!] 未设置 OPENROUTER_API_KEY：无法进行云端转写。")
 
 
 # Watch mode log helpers
@@ -554,7 +554,7 @@ def main():
     parser.add_argument("--transcript", help="直接提供转录文本内容（注意使用引号包裹）")
     parser.add_argument("--title", help="指定转录对应的标题（transcript 模式可选）")
     parser.add_argument("--source-lang", help="指定转录原语言代码（例如 en、zh）")
-    parser.add_argument("--model", help="统一覆盖 GEMINI_MODEL 的模型名称")
+    parser.add_argument("--model", help="统一覆盖 OPENROUTER_MODEL 的模型名称")
     parser.add_argument("--continue-on-error", action="store_true", help="批量模式下遇到错误继续处理下一个链接")
     parser.add_argument("--no-note", action="store_true",
                         help="跳过 Note 生成，只保留转录稿")
@@ -657,7 +657,7 @@ def main():
         outdir.mkdir(parents=True, exist_ok=True)
 
         if args.model:
-            os.environ["GEMINI_MODEL"] = args.model
+            os.environ["OPENROUTER_MODEL"] = args.model
 
         try:
             stats = asyncio.run(run_watch_mode(
@@ -778,7 +778,7 @@ def main():
 
     try:
         if args.model:
-            os.environ["GEMINI_MODEL"] = args.model
+            os.environ["OPENROUTER_MODEL"] = args.model
 
         if use_transcript_mode:
             asyncio.run(run_transcript_pipeline(

@@ -98,14 +98,14 @@ cp .env.example .env
 Open `.env`, then fill in this line:
 
 ```env
-GEMINI_API_KEY=your_api_key_here
+OPENROUTER_API_KEY=your_api_key_here
 ```
 
 Leave the other lines alone if you do not understand them yet.
 
 中文：
 - 先复制 `.env.example` 为 `.env`
-- 然后只改 `GEMINI_API_KEY=...`
+- 然后只改 `OPENROUTER_API_KEY=...`
 - 其他配置如果暂时看不懂，可以先不要动
 
 ### Step 3: Install dependencies and run one video
@@ -200,7 +200,7 @@ Important:
 
 ## Common Problems
 
-### "GEMINI_API_KEY is missing"
+### "OPENROUTER_API_KEY is missing"
 
 You forgot to fill in `.env`.
 
