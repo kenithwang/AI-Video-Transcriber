@@ -12,6 +12,8 @@ import yt_dlp
 from yt_dlp.update import Updater
 from yt_dlp.version import __version__ as ytdlp_version
 
+from .youtube_cookies import prepare_youtube_cookiefile
+
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
@@ -328,16 +330,42 @@ class VideoProcessor:
                         "BILIBILI_COOKIE_FILE 指定的文件不存在: %s", cookie_path
                     )
         elif hostname.endswith("youtube.com") or hostname.endswith("youtu.be"):
-            # YouTube 使用专门的 cookies 文件
-            cookie_file = os.getenv('YDL_COOKIEFILE')
-            if cookie_file:
-                cookie_path = Path(cookie_file).expanduser()
-                if cookie_path.exists():
-                    opts['cookiefile'] = str(cookie_path)
-                else:
+            cookie_path = prepare_youtube_cookiefile()
+            if cookie_path:
+                opts['cookiefile'] = str(cookie_path)
+                self._warn_if_youtube_cookies_incomplete(cookie_path)
+            else:
+                cookie_file = os.getenv('YDL_COOKIEFILE')
+                if cookie_file:
                     logger.warning(
-                        "YDL_COOKIEFILE 指定的文件不存在: %s", cookie_path
+                        "YDL_COOKIEFILE 指定的文件不存在: %s", cookie_file
                     )
+
+    def _warn_if_youtube_cookies_incomplete(self, cookie_path: Path) -> None:
+        required = ("LOGIN_INFO", "SID", "SAPISID")
+        names = self._cookie_names(cookie_path)
+        missing = [name for name in required if name not in names]
+        if missing:
+            logger.warning(
+                "YouTube cookie 文件缺少登录字段 %s，下载可能被判定为 bot: %s",
+                ",".join(missing),
+                cookie_path,
+            )
+
+    @staticmethod
+    def _cookie_names(cookie_path: Path) -> set[str]:
+        names: set[str] = set()
+        try:
+            with cookie_path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) >= 7:
+                        names.add(parts[5])
+        except OSError:
+            return names
+        return names
 
     async def _run_ytdlp(self, url: str, opts: dict, download: bool = True):
         def _extract():

@@ -24,6 +24,7 @@ from .xiaoyuzhou_client import XiaoyuzhouClient, parse_podcast_id
 from .obsidian_transcriber import TranscriptionIncompleteError
 from .processed_store import ProcessedStore
 from .sync_config import build_rclone_copy_command
+from .youtube_cookies import prepare_youtube_cookiefile
 
 # B站 API 请求间隔（秒），避免触发风控
 BILIBILI_API_DELAY = 0.3
@@ -336,10 +337,9 @@ class ChannelMonitor:
             "playlistend": limit or 1000,
         }
 
-        if self._cookie_file:
-            cookie_path = Path(self._cookie_file).expanduser()
-            if cookie_path.exists():
-                ydl_opts["cookiefile"] = str(cookie_path)
+        cookie_path = prepare_youtube_cookiefile(self._cookie_file)
+        if cookie_path:
+            ydl_opts["cookiefile"] = str(cookie_path)
 
         if self._js_interpreter:
             ydl_opts["js_interpreter"] = self._js_interpreter
@@ -634,10 +634,9 @@ class ChannelMonitor:
                         'no_warnings': True,
                         'skip_download': True,
                     }
-                    if self._cookie_file:
-                        cookie_path = Path(self._cookie_file).expanduser()
-                        if cookie_path.exists():
-                            check_opts['cookiefile'] = str(cookie_path)
+                    cookie_path = prepare_youtube_cookiefile(self._cookie_file)
+                    if cookie_path:
+                        check_opts['cookiefile'] = str(cookie_path)
                     if self._js_interpreter:
                         check_opts['js_interpreter'] = self._js_interpreter
 
