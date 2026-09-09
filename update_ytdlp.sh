@@ -1,41 +1,51 @@
 #!/usr/bin/env bash
-# 自动检查并更新 yt-dlp 到最新版本
-# 用法: 放入 crontab 定期执行
-
-set -uo pipefail
-
+# Validate updates in isolation; restore lock and environment if installation fails.
+set -euo pipefail
+umask 077
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$PROJECT_DIR/temp/update_ytdlp.log"
-TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-
 cd "$PROJECT_DIR"
 mkdir -p temp
-
-UV="${UV:-$(command -v uv || true)}"
-if [ -z "$UV" ]; then
-    echo "$TIMESTAMP [FAILED] update_ytdlp: uv not found in PATH" >> "$LOG_FILE"
-    exit 1
+exec >>temp/update_ytdlp.log 2>&1
+exec 9>temp/maintenance.lock
+if ! flock -n 9; then
+    echo "$(date -Is) [SKIPPED] watcher or update already running"
+    exit 0
 fi
-
-# 获取当前锁定的 yt-dlp 版本
-old_version=$(grep -A1 'name = "yt-dlp"' uv.lock | grep 'version' | head -1 | sed 's/.*"\(.*\)"/\1/')
-
-# 尝试升级 yt-dlp
-if ! $UV lock --upgrade-package yt-dlp 2>> "$LOG_FILE"; then
-    echo "$TIMESTAMP [FAILED] update_ytdlp: uv lock failed" >> "$LOG_FILE"
-    exit 1
-fi
-
-# 获取升级后的版本
-new_version=$(grep -A1 'name = "yt-dlp"' uv.lock | grep 'version' | head -1 | sed 's/.*"\(.*\)"/\1/')
-
-if [ "$old_version" = "$new_version" ]; then
-    echo "$TIMESTAMP [SUCCESS] update_ytdlp: yt-dlp $old_version 已是最新" >> "$LOG_FILE"
-else
-    if $UV sync 2>> "$LOG_FILE"; then
-        echo "$TIMESTAMP [SUCCESS] update_ytdlp: yt-dlp $old_version -> $new_version" >> "$LOG_FILE"
-    else
-        echo "$TIMESTAMP [FAILED] update_ytdlp: uv sync failed after lock upgrade" >> "$LOG_FILE"
-        exit 1
+UV="${UV:-$(command -v uv)}"
+stage=$(mktemp -d "$PROJECT_DIR/temp/ytdlp-update.XXXXXX")
+installing=0
+cleanup() {
+    status=$?
+    trap - EXIT INT TERM
+    if [ "$installing" = 1 ]; then
+        cp "$stage/previous.lock" uv.lock
+        rm -rf .venv
+        mv "$stage/previous.venv" .venv
+        echo "$(date -Is) [FAILED] restored previous lock and environment"
     fi
+    rm -rf "$stage"
+    if [ "$status" != 0 ]; then
+        echo "$(date -Is) [FAILED] update_ytdlp exit=$status"
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cp pyproject.toml uv.lock .python-version "$stage/"
+cp uv.lock "$stage/previous.lock"
+# Resolve and smoke-test without touching the running project.
+UV_PROJECT_ENVIRONMENT="$stage/candidate.venv" "$UV" lock --directory "$stage" --upgrade-package yt-dlp
+UV_PROJECT_ENVIRONMENT="$stage/candidate.venv" "$UV" sync --directory "$stage" --locked
+"$stage/candidate.venv/bin/python" -c 'import yt_dlp, requests, yaml, dotenv, defusedxml; from yt_dlp import YoutubeDL; print("Candidate:", yt_dlp.version.__version__)'
+if cmp -s uv.lock "$stage/uv.lock"; then
+    echo "$(date -Is) [SUCCESS] yt-dlp lock unchanged; candidate validated"
+    exit 0
 fi
+cp -a .venv "$stage/previous.venv"
+installing=1
+cp "$stage/uv.lock" uv.lock
+UV_PROJECT_ENVIRONMENT="$PROJECT_DIR/.venv" "$UV" sync --locked
+.venv/bin/python -c 'from backend.video_processor import VideoProcessor; VideoProcessor(); print("Project import OK")'
+installing=0
+echo "$(date -Is) [SUCCESS] update_ytdlp installed validated update"

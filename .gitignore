@@ -78,3 +78,5 @@ channels.yaml
 .processed_videos.json
 .processed_videos.json.backup.*
 obsidian-plugin/
+
+.processed_videos.json.bak.*

@@ -24,7 +24,7 @@ from .xiaoyuzhou_client import XiaoyuzhouClient, parse_podcast_id
 from .obsidian_transcriber import TranscriptionIncompleteError
 from .processed_store import ProcessedStore
 from .sync_config import build_rclone_copy_command
-from .youtube_cookies import prepare_youtube_cookiefile
+from .youtube_cookies import prepare_youtube_cookiefile, is_youtube_auth_error
 
 # B站 API 请求间隔（秒），避免触发风控
 BILIBILI_API_DELAY = 0.3
@@ -764,6 +764,9 @@ class ChannelMonitor:
             except Exception as e:
                 recoverable_transcription = isinstance(e, TranscriptionIncompleteError)
                 error_msg = f"{type(e).__name__}: {e}"
+                auth_failure = is_youtube_auth_error(video.url, error_msg)
+                if auth_failure:
+                    error_msg = '[COOKIE_AUTH_FAILED] 请更新 YouTube Cookie 主文件；视频保留重试。 ' + error_msg
                 print(f"    [!] Failed: {error_msg}")
                 log_failure(video, "转录", error_msg)
 
@@ -789,7 +792,7 @@ class ChannelMonitor:
                     f"    [!] 失败次数: {failed_attempts}/{self.max_failure_attempts}"
                 )
 
-                if failed_attempts >= self.max_failure_attempts and not recoverable_transcription:
+                if failed_attempts >= self.max_failure_attempts and not (recoverable_transcription or auth_failure):
                     self.store.mark_processed(
                         video_id=video.video_id,
                         title=video.title,

@@ -1,0 +1,14 @@
+[Unit]
+Description=Validate and update AI Video Transcriber yt-dlp
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ken-wang
+WorkingDirectory=/home/ken-wang/AI-Video-Transcriber
+Environment=PATH=/home/ken-wang/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ken-wang/AI-Video-Transcriber/update_ytdlp.sh
+TimeoutStartSec=30min
+KillMode=mixed
+UMask=0077

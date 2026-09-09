@@ -1,0 +1,10 @@
+[Unit]
+Description=Update yt-dlp daily at 04:00 Beijing time
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 UTC
+Persistent=true
+Unit=ai-video-transcriber-update.service
+
+[Install]
+WantedBy=timers.target

@@ -109,7 +109,7 @@ class ObsidianTranscriber:
         # OpenRouter 大音频并发容易 502；默认只跑 2 路
         if self.parallelism < 1:
             self.parallelism = 2
-        self.max_chunk_attempts = self._positive_int_env('TRANSCRIBE_CHUNK_MAX_ATTEMPTS', 5)
+        self.max_chunk_attempts = self._positive_int_env('TRANSCRIBE_CHUNK_MAX_ATTEMPTS', 3)
         self.retry_delay_seconds = self._nonnegative_float_env('TRANSCRIBE_RETRY_DELAY_SECONDS', 5.0)
         self.checkpoint_root = Path(checkpoint_root) if checkpoint_root is not None else None
 
