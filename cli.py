@@ -527,7 +527,7 @@ async def run_watch_mode(
     # Return statistics for watch log
     found = result['new_videos_found']
     processed = result['videos_processed']
-    failed = found - processed
+    failed = found - processed - result.get("videos_skipped", 0)
     sent = result.get("videos_sent", 0)
     channel_errors = result.get("channel_errors", len(result.get("errors", [])))
 

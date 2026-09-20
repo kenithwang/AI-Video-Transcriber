@@ -140,6 +140,30 @@ class ChannelMonitor:
         # Collect results for digest
         self._digest_processed: list[VideoDigestEntry] = []
         self._digest_failed: list[VideoDigestFailure] = []
+        self._skipped_members_only: set[str] = set()
+
+    def _skip_members_only(self, video: VideoInfo, error: str) -> bool:
+        """Persist explicit YouTube membership restrictions without failure alerts."""
+        host = (urlparse(video.url).hostname or "").lower()
+        if not (host in {"youtube.com", "youtu.be"} or host.endswith(".youtube.com")):
+            return False
+        message = error.lower()
+        if not any(marker in message for marker in (
+            "join this channel to get access to members-only content",
+            "this video is available to this channel's members",
+        )):
+            return False
+        self.store.mark_processed(
+            video_id=video.video_id, title=video.title, url=video.url,
+            channel_name=video.channel_name, sent=True,
+            skip_reason="members_only",
+        )
+        self._skipped_members_only.add(video.video_id)
+        self._digest_failed = [
+            entry for entry in self._digest_failed if entry.video_id != video.video_id
+        ]
+        print("    [skip] 仅限频道会员，后续不再重试")
+        return True
 
     def _generate_brief_summary(self, transcript: str) -> str:
         """Generate a brief summary (150-300 chars) from transcript."""
@@ -220,6 +244,9 @@ class ChannelMonitor:
         # earlier run (e.g. TranscriptionIncompleteError later resumed to
         # success), so the email no longer reports it as failed.
         for video_id in digest["processed"]:
+            digest["failed"].pop(video_id, None)
+
+        for video_id in self._skipped_members_only:
             digest["failed"].pop(video_id, None)
 
         # Cleanup entries older than 3 days
@@ -646,6 +673,8 @@ class ChannelMonitor:
                             print("    [skip] 正在直播，跳过")
                             continue
                 except Exception as e:
+                    if self._skip_members_only(video, str(e)):
+                        continue
                     # If check fails, proceed with download attempt.
                     print(f"    [!] 直播检查失败: {e}，继续尝试下载")
 
@@ -762,6 +791,8 @@ class ChannelMonitor:
                 results[video.video_id] = True
 
             except Exception as e:
+                if self._skip_members_only(video, str(e)):
+                    continue
                 recoverable_transcription = isinstance(e, TranscriptionIncompleteError)
                 error_msg = f"{type(e).__name__}: {e}"
                 auth_failure = is_youtube_auth_error(video.url, error_msg)
@@ -920,6 +951,7 @@ class ChannelMonitor:
         # Clear previous digest data
         self._digest_processed = []
         self._digest_failed = []
+        self._skipped_members_only = set()
 
         results = await self.process_new_videos(
             all_new_videos, outdir, on_update, keep_audio
@@ -927,8 +959,10 @@ class ChannelMonitor:
 
         summary["videos_processed"] = sum(1 for v in results.values() if v)
 
+        summary["videos_skipped"] = len(self._skipped_members_only)
+
         # Save video digest for news_summary integration
-        if self._digest_processed or self._digest_failed:
+        if self._digest_processed or self._digest_failed or self._skipped_members_only:
             self._save_digest()
 
 
