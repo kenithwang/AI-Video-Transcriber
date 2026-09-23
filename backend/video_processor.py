@@ -407,12 +407,21 @@ class VideoProcessor:
             else:
                 progressive.append(fmt)
 
+        # A slightly higher bitrate must never select an auto-dub over the
+        # original track. Keep fallbacks in the original language as well.
+        originals = [fmt for fmt in audio_formats + progressive
+                     if 'original' in (fmt.get('format_note') or '').lower()]
+        original_languages = {fmt.get('language') for fmt in originals if fmt.get('language')}
+        if original_languages:
+            audio_formats = [fmt for fmt in audio_formats if fmt.get('language') in original_languages]
+            progressive = [fmt for fmt in progressive if fmt.get('language') in original_languages]
+
         def _audio_score(fmt: dict) -> tuple:
             abr = fmt.get('abr') or fmt.get('tbr') or 0
             size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
             # 适度偏向 m4a，便于后续音频抽取
             ext_priority = 1 if fmt.get('ext') == 'm4a' else 0
-            return (float(abr), ext_priority, float(size))
+            return (fmt.get('language_preference') or 0, float(abr), ext_priority, float(size))
 
         audio_formats.sort(key=_audio_score, reverse=True)
 
@@ -451,7 +460,7 @@ class VideoProcessor:
             if format_id not in candidates:
                 candidates.append(format_id)
 
-        default_id = info.get('format_id')
+        default_id = info.get('format_id') if not original_languages else None
         if default_id:
             default_id = str(default_id)
             if default_id not in candidates:

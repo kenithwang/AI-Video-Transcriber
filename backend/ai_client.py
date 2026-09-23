@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 import time
@@ -24,6 +25,7 @@ _FINISH_REASON_MAP = {
     "length": "MAX_TOKENS",
     "content_filter": "SAFETY",
     "tool_calls": "STOP",
+    "error": "ERROR",
 }
 
 
@@ -82,6 +84,10 @@ def audio_format_for_path(path: Path) -> str:
 
 class TransientOpenRouterError(RuntimeError):
     """Retryable OpenRouter failure such as 502 or empty choices."""
+
+
+class PermanentOpenRouterError(RuntimeError):
+    """An explicit provider rejection that immediate retries cannot repair."""
 
 
 def encode_audio_for_upload(path: Path) -> Path:
@@ -175,22 +181,41 @@ class OpenRouterClient:
             response.raise_for_status()
             raise RuntimeError(f"OpenRouter 返回了非 JSON 响应: {response.text[:200]}") from exc
 
-        if not response.ok:
-            detail = data.get("error") if isinstance(data, dict) else data
-            message = f"OpenRouter 请求失败 ({response.status_code}): {detail}"
-            if response.status_code in RETRYABLE_STATUS:
-                raise TransientOpenRouterError(message)
-            raise RuntimeError(message)
-
         choices = data.get("choices") or []
-        if not choices:
-            raise TransientOpenRouterError("empty choices")
+        choice = choices[0] if choices else {}
+        # Providers can fail after HTTP 200 has already been sent, including
+        # after partial text. Never accept that text as a completed response.
+        error = data.get("error") or choice.get("error")
+        finish = normalize_finish_reason(choice.get("finish_reason"))
+        diagnostic = {
+            "id": data.get("id"), "provider": data.get("provider"),
+            "model": data.get("model"), "finish_reason": finish,
+            "native_finish_reason": choice.get("native_finish_reason"),
+        }
+        if not response.ok or error or finish == "ERROR":
+            detail = error if isinstance(error, dict) else {"message": str(error or "provider generation error")}
+            code = detail.get("code", response.status_code if not response.ok else 502)
+            try:
+                code = int(code)
+            except (ValueError, TypeError):
+                code = 502
+            metadata = detail.get("metadata") or {}
+            diagnostic.update(code=code, message=str(detail.get("message", ""))[:1000],
+                              error_type=metadata.get("error_type"), provider_code=metadata.get("provider_code"))
+            message = "OpenRouter 请求失败: " + json.dumps(diagnostic, ensure_ascii=False)
+            if code in RETRYABLE_STATUS:
+                raise TransientOpenRouterError(message)
+            raise PermanentOpenRouterError(message)
 
-        choice = choices[0]
+        if not choices:
+            raise TransientOpenRouterError("empty choices: " + json.dumps(diagnostic, ensure_ascii=False))
+
         message = choice.get("message") or {}
         text = (message.get("content") or "").strip()
         if not text:
-            raise TransientOpenRouterError("empty content")
+            if finish == "SAFETY":
+                raise PermanentOpenRouterError("OpenRouter 内容过滤: " + json.dumps(diagnostic, ensure_ascii=False))
+            raise TransientOpenRouterError("empty content: " + json.dumps(diagnostic, ensure_ascii=False))
         return ChatResult(
             text=text,
             finish_reason=normalize_finish_reason(choice.get("finish_reason")),

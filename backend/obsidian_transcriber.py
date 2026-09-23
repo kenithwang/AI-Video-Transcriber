@@ -13,7 +13,7 @@ from threading import Lock
 from typing import Optional, Tuple, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .ai_client import OpenRouterClient
+from .ai_client import OpenRouterClient, PermanentOpenRouterError
 from .transcription_checkpoint import TranscriptionCheckpoint
 
 logger = logging.getLogger(__name__)
@@ -37,16 +37,19 @@ class ChunkResult:
     finish_message: str = ''
     error: str = ''
     attempts: int = 1
+    retryable: bool = True
 
 
 class TranscriptionIncompleteError(RuntimeError):
     """A recoverable error indicating that some chunks still need transcription."""
 
-    def __init__(self, failed_chunks: List[int]):
+    def __init__(self, failed_chunks: List[int], details: Optional[dict[int, str]] = None):
         self.failed_chunks = sorted(failed_chunks)
+        self.details = details or {}
         super().__init__(
             f"转写过程中 {len(self.failed_chunks)} 个分片失败: "
             f"{self.failed_chunks}，成功分片已保存，稍后将只重试失败分片"
+            + ("；原因: " + "; ".join(f"{i}: {reason}" for i, reason in sorted(self.details.items())) if self.details else "")
         )
 
 
@@ -291,6 +294,7 @@ class ObsidianTranscriber:
                 finish_reason='ERROR',
                 finish_message=str(e),
                 error=str(e),
+                retryable=not isinstance(e, PermanentOpenRouterError),
             )
         finally:
             self._release_model(model)
@@ -397,6 +401,8 @@ class ObsidianTranscriber:
             )
             if self._is_successful_result(result):
                 return result
+            if not result.retryable or result.finish_reason == 'SAFETY':
+                return result
             if not result.error:
                 result.error = (
                     'empty response'
@@ -417,6 +423,8 @@ class ObsidianTranscriber:
     def _checkpoint_signature(self, chunks: List[AudioChunk]) -> dict:
         prompt = f'{self._system_instruction}\n{self._transcribe_prompt}'
         return {
+            # Old checkpoints may contain an auto-dub selected by bitrate.
+            'audio_selection_version': 'original-language-v2',
             'model': self.model_name,
             'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
             'segment_seconds': self.segment_seconds,
@@ -486,6 +494,7 @@ class ObsidianTranscriber:
                     len(chunks),
                 )
             failed_chunks: List[int] = []
+            failure_details: dict[int, str] = {}
             # 在线程池中并行处理每个分片，保持输出顺序
             with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
                 futures = {}
@@ -529,6 +538,7 @@ class ObsidianTranscriber:
                             result.finish_message or '-',
                         )
                         failed_chunks.append(idx)
+                        failure_details[idx] = result.error or result.finish_message or result.finish_reason
                         if checkpoint:
                             checkpoint.record_failure(
                                 idx,
@@ -544,7 +554,7 @@ class ObsidianTranscriber:
             # 收集警告信息
             warnings: List[str] = []
             if failed_chunks:
-                raise TranscriptionIncompleteError(failed_chunks)
+                raise TranscriptionIncompleteError(failed_chunks, failure_details)
 
             if checkpoint:
                 checkpoint.mark_complete()
