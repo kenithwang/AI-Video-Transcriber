@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 
+from backend.runtime_diagnostics import phase, watch_diagnostics
 from backend.sync_config import build_rclone_copy_command
 
 try:
@@ -491,7 +492,8 @@ async def run_watch_mode(
     """
     from backend.channel_monitor import ChannelMonitor
 
-    monitor = ChannelMonitor(config_path)
+    with phase("watch_prepare"):
+        monitor = ChannelMonitor(config_path)
 
     print(f"[i] 频道配置: {config_path}")
     print(f"[i] 已处理视频记录: {monitor._store_path}")
@@ -660,13 +662,14 @@ def main():
             os.environ["OPENROUTER_MODEL"] = args.model
 
         try:
-            stats = asyncio.run(run_watch_mode(
-                config_path=args.config,
-                outdir=outdir,
-                lookback_override=args.lookback,
-                dry_run=args.dry_run,
-                keep_audio=args.keep_audio,
-            ))
+            with watch_diagnostics(outdir):
+                stats = asyncio.run(run_watch_mode(
+                    config_path=args.config,
+                    outdir=outdir,
+                    lookback_override=args.lookback,
+                    dry_run=args.dry_run,
+                    keep_audio=args.keep_audio,
+                ))
             # Write success log (skip for dry-run mode)
             if not args.dry_run:
                 write_watch_log(

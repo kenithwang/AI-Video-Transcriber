@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
+from .runtime_diagnostics import diagnosed, phase
 from .video_processor import VideoProcessor
 from .obsidian_transcriber import ObsidianTranscriber
 
@@ -21,6 +22,7 @@ def _create_emitter(on_update: Optional[Callable[[dict], Awaitable[None]]]):
     return emit
 
 
+@diagnosed("persist")
 async def _write_file(path: Path, content: str) -> None:
     """异步、原子地写入文件，避免断电留下半份转录。"""
     temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -70,6 +72,7 @@ def _sanitize_title_for_filename(title: str, max_bytes: int = 200) -> str:
     return truncated.rstrip("._-") or "untitled"
 
 
+@diagnosed("video")
 async def process_video(
     url: str,
     temp_dir: Path,
@@ -127,11 +130,12 @@ async def process_video(
         # 1) Download + convert
         status.update({"progress": 10, "message": "downloading video..."})
         await emit(status)
-        audio_path, video_title = await video_processor.download_and_convert(
-            download_url or url,
-            work_dir,
-            video_info=video_info,
-        )
+        with phase("download_convert"):
+            audio_path, video_title = await video_processor.download_and_convert(
+                download_url or url,
+                work_dir,
+                video_info=video_info,
+            )
 
         status.update({"progress": 35, "message": "video downloaded; transcribing..."})
         await emit(status)

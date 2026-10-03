@@ -13,6 +13,8 @@ from typing import Any, Optional
 
 import requests
 
+from .runtime_diagnostics import diagnosed, file_size, phase
+
 DEFAULT_MODEL = "google/gemini-3.7-flash"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 600
@@ -90,6 +92,7 @@ class PermanentOpenRouterError(RuntimeError):
     """An explicit provider rejection that immediate retries cannot repair."""
 
 
+@diagnosed("upload_prepare")
 def encode_audio_for_upload(path: Path) -> Path:
     """Return an MP3 suitable for OpenRouter. WAV is only used as a local temp."""
     src = Path(path)
@@ -139,6 +142,7 @@ class OpenRouterClient:
             }
         )
 
+    @diagnosed("cloud_request")
     def complete(
         self,
         messages: list[dict[str, Any]],
@@ -248,8 +252,10 @@ class OpenRouterClient:
         source = Path(audio_path)
         upload_path = encode_audio_for_upload(source)
         try:
-            audio_bytes = upload_path.read_bytes()
-            encoded = base64.b64encode(audio_bytes).decode("ascii")
+            with phase("upload_read", input_bytes=file_size(upload_path)):
+                audio_bytes = upload_path.read_bytes()
+            with phase("upload_encode", input_bytes=len(audio_bytes)):
+                encoded = base64.b64encode(audio_bytes).decode("ascii")
             user_content = [
                 {"type": "text", "text": prompt},
                 {

@@ -24,6 +24,7 @@ from .xiaoyuzhou_client import XiaoyuzhouClient, parse_podcast_id
 from .obsidian_transcriber import TranscriptionIncompleteError
 from .processed_store import ProcessedStore
 from .sync_config import build_rclone_copy_command
+from .runtime_diagnostics import diagnosed, phase
 from .youtube_cookies import prepare_youtube_cookiefile, is_youtube_auth_error
 
 # B站 API 请求间隔（秒），避免触发风控
@@ -320,6 +321,7 @@ class ChannelMonitor:
         """Get list of enabled channels only."""
         return [ch for ch in self.get_channels() if ch.enabled]
 
+    @diagnosed("channel_fetch")
     def fetch_channel_videos(
         self, channel_url: str, limit: Optional[int] = 30
     ) -> list[VideoInfo]:
@@ -667,7 +669,7 @@ class ChannelMonitor:
                     if self._js_interpreter:
                         check_opts['js_interpreter'] = self._js_interpreter
 
-                    with yt_dlp.YoutubeDL(check_opts) as ydl:
+                    with phase("live_probe"), yt_dlp.YoutubeDL(check_opts) as ydl:
                         info = ydl.extract_info(video.url, download=False)
                         if info.get('is_live'):
                             print("    [skip] 正在直播，跳过")
@@ -706,7 +708,8 @@ class ChannelMonitor:
                                 transcript_content, mode_index=video.note_mode
                             )
 
-                        note_content = await asyncio.to_thread(_do_generate)
+                        with phase("note"):
+                            note_content = await asyncio.to_thread(_do_generate)
 
                         video_title = result.get("video_title", video.title)
                         note_filename = generate_note_filename(video_title)
@@ -720,11 +723,12 @@ class ChannelMonitor:
                         sync_success = False
                         if sync_cmd:
                             try:
-                                sync_result = subprocess.run(
-                                    sync_cmd,
-                                    capture_output=True,
-                                    timeout=120,
-                                )
+                                with phase("sync"):
+                                    sync_result = subprocess.run(
+                                        sync_cmd,
+                                        capture_output=True,
+                                        timeout=120,
+                                    )
                                 if sync_result.returncode == 0:
                                     print("    [OK] Synced to configured Rclone remote")
                                     sync_success = True

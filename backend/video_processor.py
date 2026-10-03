@@ -14,6 +14,8 @@ from yt_dlp.version import __version__ as ytdlp_version
 
 from .youtube_cookies import prepare_youtube_cookiefile
 
+from .runtime_diagnostics import diagnosed, phase
+
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
@@ -229,7 +231,8 @@ class VideoProcessor:
                         '-of', 'default=noprint_wrappers=1:nokey=1',
                         path
                     ]
-                    out_local = subprocess.check_output(cmd).decode().strip()
+                    with phase("duration_probe"):
+                        out_local = subprocess.check_output(cmd).decode().strip()
                     return float(out_local) if out_local else 0.0
 
                 out = _probe(audio_file)
@@ -248,7 +251,8 @@ class VideoProcessor:
                         '-vn', '-c:a', 'aac', '-b:a', '160k',
                         '-movflags', '+faststart', fixed_path
                     ]
-                    subprocess.check_call(fix_cmd)
+                    with phase("remux"):
+                        subprocess.check_call(fix_cmd)
                     # 用修复后的文件替换
                     audio_file = fixed_path
                     # 重新探测
@@ -367,6 +371,7 @@ class VideoProcessor:
             return names
         return names
 
+    @diagnosed("download")
     async def _run_ytdlp(self, url: str, opts: dict, download: bool = True):
         def _extract():
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -374,6 +379,7 @@ class VideoProcessor:
 
         return await asyncio.to_thread(_extract)
 
+    @diagnosed("download_probe")
     def _probe_video_info(self, url: str, base_opts: dict) -> dict:
         probe_opts = base_opts.copy()
         # 探测阶段无需下载或执行后处理

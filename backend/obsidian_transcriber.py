@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .ai_client import OpenRouterClient, PermanentOpenRouterError
 from .transcription_checkpoint import TranscriptionCheckpoint
 
+from .runtime_diagnostics import diagnosed, file_size, phase
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +162,7 @@ class ObsidianTranscriber:
         except (TypeError, ValueError):
             return default
 
+    @diagnosed("duration_probe")
     def _ffprobe_duration(self, path: Path) -> float:
         try:
             out = subprocess.check_output([
@@ -170,6 +173,7 @@ class ObsidianTranscriber:
         except Exception:
             return 0.0
 
+    @diagnosed("split")
     def _split_audio(self, audio_path: Path) -> tuple[List[AudioChunk], Path]:
         """静音对齐的分片：尽量以 segment_seconds 为目标，优先在±5s 静音点切分。返回(片段信息列表, 工作目录)。"""
         workdir = Path(tempfile.mkdtemp(prefix='obs_work_', dir=str(audio_path.parent)))
@@ -179,7 +183,8 @@ class ObsidianTranscriber:
             'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
             '-i', str(audio_path), '-ac', '1', '-ar', '16000', str(norm_wav)
         ]
-        subprocess.check_call(cmd_norm)
+        with phase("normalize", input_bytes=file_size(audio_path)):
+            subprocess.check_call(cmd_norm)
 
         duration = self._ffprobe_duration(norm_wav)
         if duration <= 0:
@@ -193,7 +198,8 @@ class ObsidianTranscriber:
             '-f', 'null', '-'
         ]
         try:
-            out = subprocess.check_output(cmd_sil, stderr=subprocess.STDOUT).decode('utf-8', 'ignore')
+            with phase("silence_detect"):
+                out = subprocess.check_output(cmd_sil, stderr=subprocess.STDOUT).decode('utf-8', 'ignore')
         except subprocess.CalledProcessError as e:
             out = e.output.decode('utf-8', 'ignore') if e.output else ''
 
@@ -240,10 +246,11 @@ class ObsidianTranscriber:
         mp3_args = ['-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '64k']
         if len(cuts) == 1 and abs(cuts[0][0]) < 1e-3 and abs(cuts[0][1] - duration) < 1e-3:
             target = outdir / 'chunk_001.mp3'
-            subprocess.check_call([
-                'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
-                '-i', str(norm_wav), *mp3_args, str(target),
-            ])
+            with phase("split_encode"):
+                subprocess.check_call([
+                    'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+                    '-i', str(norm_wav), *mp3_args, str(target),
+                ])
             files.append(AudioChunk(target, cuts[0][0], cuts[0][1]))
             norm_wav.unlink(missing_ok=True)
             return files, workdir
@@ -259,7 +266,8 @@ class ObsidianTranscriber:
             *mp3_args,
             str(outdir / 'chunk_%03d.mp3'),
         ]
-        subprocess.check_call(cmd_cut)
+        with phase("split_encode"):
+            subprocess.check_call(cmd_cut)
         norm_wav.unlink(missing_ok=True)
 
         produced = sorted(outdir.glob('chunk_*.mp3'))
@@ -381,7 +389,10 @@ class ObsidianTranscriber:
         last = ChunkResult(error='未执行转写', attempts=0)
         for attempt in range(1, self.max_chunk_attempts + 1):
             try:
-                result = self._gen_text(chunk)
+                with phase("chunk_attempt", chunk_index=index, attempt=attempt,
+                           concurrency=self.parallelism, input_bytes=file_size(chunk.path),
+                           duration_seconds=chunk.duration):
+                    result = self._gen_text(chunk)
             except Exception as e:
                 result = ChunkResult(
                     finish_reason='ERROR',
@@ -456,6 +467,7 @@ class ObsidianTranscriber:
         except Exception:
             return f"{size_bytes} bytes"
 
+    @diagnosed("transcribe")
     def transcribe(
         self,
         audio_path: Path,
@@ -496,7 +508,7 @@ class ObsidianTranscriber:
             failed_chunks: List[int] = []
             failure_details: dict[int, str] = {}
             # 在线程池中并行处理每个分片，保持输出顺序
-            with ThreadPoolExecutor(max_workers=self.parallelism) as ex:
+            with phase("transcribe_queue", chunk_count=len(chunks), concurrency=self.parallelism), ThreadPoolExecutor(max_workers=self.parallelism) as ex:
                 futures = {}
                 for idx, chunk in enumerate(chunks, 1):
                     if idx in texts_by_index:
