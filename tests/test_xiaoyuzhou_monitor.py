@@ -1,8 +1,11 @@
 import asyncio
+import hashlib
+import json
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.channel_monitor import ChannelMonitor, VideoInfo
@@ -75,6 +78,39 @@ class XiaoyuzhouMonitorTests(unittest.TestCase):
         ydl.assert_not_called()
         self.assertEqual(video.url, captured["url"])
         self.assertEqual(video.media_url, captured["download_url"])
+
+    def test_archive_receipt_requires_uploaded_unchanged_bytes_and_survives_cleanup(self):
+        for synced, changed in [(True, False), (False, False), (True, True)]:
+            with self.subTest(synced=synced, changed=changed), tempfile.TemporaryDirectory() as tmp:
+                monitor = self._monitor(tmp)
+                video = VideoInfo(video_id='receipt-video', url='https://example.test/episode',
+                                  title='Episode', channel_id='podcast', channel_name='Podcast',
+                                  upload_date=datetime.now(), duration=60,
+                                  media_url='https://example.test/audio.mp3', note_mode=1)
+                async def fake_process_video(**kwargs):
+                    (Path(kwargs['temp_dir']) / 'transcript.md').write_text('complete transcript')
+                    return {'transcript_file': 'transcript.md', 'video_title': 'Episode'}
+                class NoteGenerator:
+                    def generate_note(self, *a, **kw): return 'Complete final note bytes.'
+                def upload(*a, **kw):
+                    if changed: (Path(tmp) / 'finished.md').write_text('changed during upload')
+                    return SimpleNamespace(returncode=0 if synced else 1)
+                monitor._generate_brief_summary = lambda text: ''
+                with patch('backend.pipeline.process_video', fake_process_video), \
+                     patch('backend.note_generator.NoteGenerator', NoteGenerator), \
+                     patch('backend.note_generator.generate_note_filename', return_value='finished.md'), \
+                     patch('backend.channel_monitor.build_rclone_copy_command', return_value=['rclone']), \
+                     patch('subprocess.run', side_effect=upload):
+                    asyncio.run(monitor.process_new_videos([video], Path(tmp)))
+                (Path(tmp) / 'finished.md').unlink()
+                monitor.store.mark_sent(video.video_id)
+                saved = json.loads(monitor.store.store_path.read_text())['videos'][video.video_id]
+                if synced and not changed:
+                    self.assertEqual(saved['completed_note']['sha256'],
+                                     hashlib.sha256(b'Complete final note bytes.').hexdigest())
+                    self.assertTrue(saved['completed_note']['synced'])
+                else:
+                    self.assertNotIn('completed_note', saved)
 
     def test_baseline_marks_only_enabled_xiaoyuzhou_episodes_sent(self):
         channels = """channels:

@@ -70,6 +70,7 @@ class ProcessedStore:
         sent: bool = False,
         failed_attempts: Optional[int] = None,
         skip_reason: Optional[str] = None,
+        completed_note: Optional[dict[str, Any]] = None,
     ) -> None:
         """Mark a video as processed and save immediately."""
         info: dict[str, Any] = {
@@ -84,6 +85,8 @@ class ProcessedStore:
             info["failed_attempts"] = failed_attempts
         if skip_reason:
             info["skip_reason"] = skip_reason
+        if completed_note is not None:
+            info["completed_note"] = completed_note
 
         self._data["videos"][video_id] = info
         self._data.get("failures", {}).pop(video_id, None)

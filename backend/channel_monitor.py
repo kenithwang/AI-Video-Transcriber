@@ -5,6 +5,7 @@ Monitors configured YouTube/Bilibili channels for new videos
 and processes them using the existing transcription pipeline.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -695,6 +696,7 @@ class ChannelMonitor:
 
                 # Generate note if note_mode is specified
                 note_file = None
+                completed_note = None
                 if video.note_mode and transcript_file:
                     try:
                         print("    [i] Generating note...")
@@ -716,6 +718,7 @@ class ChannelMonitor:
                         note_path = outdir / note_filename
                         note_path.write_text(note_content, encoding="utf-8")
                         note_file = note_filename
+                        note_hash = hashlib.sha256(note_path.read_bytes()).hexdigest()
 
                         print(f"    [OK] Note: {note_filename}")
 
@@ -745,6 +748,11 @@ class ChannelMonitor:
                         # news_summary will cleanup these files after sending
                         # (see news_summary/video_tracker.py:cleanup_sent_notes)
                         if sync_success:
+                            if hashlib.sha256(note_path.read_bytes()).hexdigest() == note_hash:
+                                completed_note = {"schema": 1, "sha256": note_hash,
+                                                  "artifact": str(note_path.resolve()), "synced": True}
+                            else:
+                                print("    [!] Note changed during sync; no archive completion receipt published")
                             print("    [OK] Synced, local files retained for email delivery")
 
                     except Exception as e:
@@ -790,6 +798,7 @@ class ChannelMonitor:
                     url=video.url,
                     channel_name=video.channel_name,
                     transcript_file=transcript_file,
+                    completed_note=completed_note,
                 )
 
                 results[video.video_id] = True
