@@ -1,4 +1,6 @@
 import os
+import io
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -166,6 +168,76 @@ class VideoProcessorConfigTests(unittest.TestCase):
             self.assertTrue(all("master-login" in text for text in seen_at_open))
             self.assertIn("master-login", master_path.read_text(encoding="utf-8"))
             self.assertEqual("mutated-by-yt-dlp\n", runtime_path.read_text(encoding="utf-8"))
+
+
+class SubtitleRetrievalTests(unittest.TestCase):
+    def make_ydl(self, info, responses=None):
+        from unittest.mock import MagicMock
+        ydl = MagicMock()
+        ydl.__enter__.return_value = ydl
+        ydl.extract_info.return_value = info
+        if responses is not None:
+            ydl.urlopen.side_effect = responses
+        return ydl
+
+    def test_fetch_uses_no_audio_and_preserves_network_configuration(self):
+        info = {"title": "Original", "http_headers": {"Referer": "https://video.test"},
+                "automatic_captions": {"en-orig": [{"ext": "vtt", "url": "https://subs.test",
+                                                     "http_headers": {"User-Agent": "Test"}}]}}
+        ydl = self.make_ydl(info, [io.BytesIO(b"WEBVTT\n\n00:00.000 --> 00:02.000\nHello world.")])
+        processor = VideoProcessor()
+        processor.ydl_opts["proxy"] = "http://proxy.test"
+        processor.ydl_opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
+        with patch("backend.video_processor.yt_dlp.YoutubeDL", return_value=ydl) as factory:
+            caption = processor.get_subtitle_transcript("https://video.test", video_info={"title": "Cached"})
+        self.assertEqual(("Hello world.", "Cached", "en", "automatic"),
+                         (caption.text, caption.title, caption.language, caption.kind))
+        opts = factory.call_args.args[0]
+        self.assertTrue(opts["skip_download"])
+        self.assertNotIn("postprocessors", opts)
+        self.assertNotIn("format", opts)
+        self.assertEqual("http://proxy.test", opts["proxy"])
+        self.assertEqual(["web"], opts["extractor_args"]["youtube"]["player_client"])
+        self.assertIn("translated_subs", opts["extractor_args"]["youtube"]["skip"])
+        ydl.extract_info.assert_called_once_with("https://video.test", download=False)
+        request = ydl.urlopen.call_args.args[0]
+        self.assertEqual("https://video.test", request.headers["Referer"])
+        self.assertEqual("Test", request.headers["User-Agent"])
+
+    def test_failed_manual_and_empty_format_can_fall_back_to_native_asr(self):
+        info = {"title": "Title", "subtitles": {"en": [{"ext": "srt", "url": "https://manual.test"}]},
+                "automatic_captions": {"en-orig": [
+                    {"ext": "json3", "url": "https://json.test"},
+                    {"ext": "vtt", "data": "00:00.000 --> 00:03.000\nAutomatic captions."}]}}
+        ydl = self.make_ydl(info, [OSError("unavailable"), io.BytesIO(b'{"events": []}')])
+        with patch("backend.video_processor.yt_dlp.YoutubeDL", return_value=ydl):
+            result = VideoProcessor().get_subtitle_transcript("https://video.test")
+        self.assertEqual("automatic", result.kind)
+        self.assertEqual(2, ydl.urlopen.call_count)
+
+    def test_inline_bilibili_captions_need_no_second_download(self):
+        info = {"title": "B站字幕", "subtitles": {"zh": [{"ext": "srt", "data":
+                "1\n00:00:00,000 --> 00:00:03,000\n你好，世界。"}]}}
+        ydl = self.make_ydl(info)
+        with patch("backend.video_processor.yt_dlp.YoutubeDL", return_value=ydl):
+            result = VideoProcessor().get_subtitle_transcript("https://video.test")
+        self.assertEqual("你好，世界。", result.text)
+        ydl.urlopen.assert_not_called()
+
+    def test_no_subtitles_and_extractor_failure_return_none(self):
+        for info, error in [({"title": "No captions"}, None), (None, RuntimeError("network"))]:
+            with self.subTest(info=info):
+                ydl = self.make_ydl(info)
+                ydl.extract_info.side_effect = error
+                with patch("backend.video_processor.yt_dlp.YoutubeDL", return_value=ydl):
+                    self.assertIsNone(VideoProcessor().get_subtitle_transcript("https://video.test"))
+
+    def test_cancellation_is_not_swallowed(self):
+        ydl = self.make_ydl(None)
+        ydl.extract_info.side_effect = asyncio.CancelledError()
+        with patch("backend.video_processor.yt_dlp.YoutubeDL", return_value=ydl):
+            with self.assertRaises(asyncio.CancelledError):
+                VideoProcessor().get_subtitle_transcript("https://video.test")
 
 
 if __name__ == "__main__":

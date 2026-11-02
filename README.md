@@ -12,15 +12,21 @@ Turn a video link into a Markdown transcript with Gemini.
 ## What This Tool Does
 
 - Paste a video link from YouTube, Bilibili, and similar sites.
-- The tool downloads the audio, sends it to Gemini, and saves a transcript as a Markdown file.
+- The tool first tries original-language subtitles (manual first, then automatic captions). If none are usable, it downloads the audio and sends it to Gemini. Either path saves a Markdown transcript.
 - It can also generate a note version of the transcript.
 - If you configure `RCLONE_REMOTE_PATH`, it can sync note files to your remote storage.
 
 中文：
 - 你提供一个视频链接。
-- 工具会下载音频，用 Gemini 转录，并保存成 Markdown 文件。
+- 工具先尝试原语言字幕，没有可用字幕时才下载音频并用 Gemini 转录，保存成 Markdown 文件。
 - 它也可以顺手帮你生成一份 Note。
 - 如果你配置了 `RCLONE_REMOTE_PATH`，它还可以把 Note 同步到你的远端存储。
+
+Subtitle-first processing is enabled for single links, batches, and channel monitoring.
+It skips audio downloads and transcription model calls when captions are usable; note generation still uses the model.
+Empty, unsupported, failed, or visibly truncated captions fall back to audio. Translated tracks and live chat are excluded.
+Set `SUBTITLES_FIRST=0` in `.env` to force audio transcription. With captions, `--keep-audio` does not trigger an extra download.
+Direct podcast audio continues to use transcription.
 
 ## Who This Is For
 

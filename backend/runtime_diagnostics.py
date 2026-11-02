@@ -14,7 +14,7 @@ import time
 import uuid
 
 PHASES = frozenset({
-    "watch_prepare", "channel_fetch", "live_probe", "video", "download_convert",
+    "watch_prepare", "channel_fetch", "live_probe", "video", "subtitles", "download_convert",
     "download_probe", "download", "duration_probe", "remux", "normalize",
     "silence_detect", "split", "split_encode", "transcribe", "transcribe_queue", "chunk_attempt",
     "upload_prepare", "upload_read", "upload_encode", "cloud_request", "persist",

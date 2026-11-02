@@ -2,13 +2,18 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend import pipeline
+from backend.subtitles import SubtitleTranscript
+from backend.transcription_checkpoint import TranscriptionCheckpoint
 
 
 class FakeVideoProcessor:
     last_url = None
+
+    def get_subtitle_transcript(self, url, *, video_info=None):
+        return None
 
     async def download_and_convert(self, url, output_dir, *, video_info=None):
         FakeVideoProcessor.last_url = url
@@ -112,6 +117,73 @@ class PipelineCleanupTests(unittest.TestCase):
             self.assertEqual(temp_dir / ".transcription_checkpoints", FakeTranscriber.checkpoint_root)
             self.assertEqual(public_url, FakeTranscriber.transcribed_key)
             self.assertEqual([public_url], FakeTranscriber.cleared_keys)
+
+
+class SubtitlePipelineTests(unittest.TestCase):
+    def setUp(self):
+        self.caption = SubtitleTranscript("Complete caption text.", "Captioned Video", "en", "manual")
+
+    def test_caption_hit_never_constructs_model_or_downloads_audio_even_with_keep_audio(self):
+        for keep_audio in (False, True):
+            with self.subTest(keep_audio=keep_audio), tempfile.TemporaryDirectory() as tmp:
+                processor = Mock(spec=FakeVideoProcessor)
+                processor.get_subtitle_transcript.return_value = self.caption
+                root = Path(tmp)
+                url = "https://www.youtube.com/watch?v=captioned"
+                checkpoint = TranscriptionCheckpoint(root / ".transcription_checkpoints", url)
+                checkpoint.prepare({"test": True})
+                with patch.dict("os.environ", {"SUBTITLES_FIRST": "1", "OPENROUTER_API_KEY": ""}), \
+                     patch.object(pipeline, "VideoProcessor", return_value=processor), \
+                     patch.object(pipeline, "ObsidianTranscriber") as model:
+                    result = asyncio.run(pipeline.process_video(url, root, keep_audio=keep_audio))
+                model.assert_not_called()
+                processor.download_and_convert.assert_not_called()
+                self.assertEqual("subtitles", result["transcript_source"])
+                self.assertEqual("manual", result["subtitle_type"])
+                self.assertIsNone(result["audio_file"])
+                self.assertEqual("en", result["detected_language"])
+                text = (root / result["transcript_file"]).read_text()
+                self.assertIn("# Captioned Video\n\nComplete caption text.", text)
+                self.assertIn(f"source: {url}", text)
+                self.assertFalse(checkpoint.job_dir.exists())
+                self.assertEqual([], list(root.glob(".work_*")))
+
+    def test_missing_or_failed_captions_fall_back_to_audio(self):
+        for failure in (None, RuntimeError("captions unavailable")):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                with patch.object(FakeVideoProcessor, "get_subtitle_transcript", return_value=None,
+                                  side_effect=failure), \
+                     patch.object(pipeline, "VideoProcessor", FakeVideoProcessor), \
+                     patch.object(pipeline, "ObsidianTranscriber", FakeTranscriber):
+                    result = asyncio.run(pipeline.process_video("https://video.test", Path(tmp)))
+                self.assertEqual("audio", result["transcript_source"])
+                self.assertIsNone(result["subtitle_type"])
+                self.assertIn("transcript body", (Path(tmp) / result["transcript_file"]).read_text())
+
+    def test_disabled_and_direct_podcast_skip_subtitle_requests(self):
+        for setting, media in (("0", None), ("1", "https://cdn.test/podcast.mp3")):
+            with self.subTest(setting=setting, media=media), tempfile.TemporaryDirectory() as tmp:
+                with patch.dict("os.environ", {"SUBTITLES_FIRST": setting}), \
+                     patch.object(FakeVideoProcessor, "get_subtitle_transcript") as lookup, \
+                     patch.object(pipeline, "VideoProcessor", FakeVideoProcessor), \
+                     patch.object(pipeline, "ObsidianTranscriber", FakeTranscriber):
+                    result = asyncio.run(pipeline.process_video("https://video.test", Path(tmp), download_url=media))
+                lookup.assert_not_called()
+                self.assertEqual("audio", result["transcript_source"])
+
+    def test_failed_caption_persistence_preserves_existing_audio_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            url = "https://video.test"
+            checkpoint = TranscriptionCheckpoint(root / ".transcription_checkpoints", url)
+            checkpoint.prepare({"test": True})
+            processor = Mock(spec=FakeVideoProcessor)
+            processor.get_subtitle_transcript.return_value = self.caption
+            with patch.object(pipeline, "VideoProcessor", return_value=processor), \
+                 patch.object(pipeline, "_write_file", side_effect=OSError("disk full")):
+                with self.assertRaisesRegex(OSError, "disk full"):
+                    asyncio.run(pipeline.process_video(url, root))
+            self.assertTrue(checkpoint.manifest_path.exists())
 
 
 if __name__ == "__main__":

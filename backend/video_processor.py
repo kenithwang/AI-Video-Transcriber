@@ -13,6 +13,8 @@ from yt_dlp.update import Updater
 from yt_dlp.version import __version__ as ytdlp_version
 
 from .youtube_cookies import prepare_youtube_cookiefile
+from .subtitles import SubtitleTranscript, subtitle_candidates, subtitles_to_text
+from yt_dlp.networking import Request
 
 from .runtime_diagnostics import diagnosed, phase
 
@@ -273,6 +275,61 @@ class VideoProcessor:
                     logger.warning(hint)
             logger.error(f"下载视频失败: {message}")
             raise Exception(f"下载视频失败: {message}") from e
+
+    @diagnosed("subtitles")
+    def get_subtitle_transcript(self, url: str, *, video_info: Optional[dict] = None) -> Optional[SubtitleTranscript]:
+        """Best-effort captions lookup. No media download or model calls."""
+        opts = self.ydl_opts.copy()
+        for key in ('format', 'postprocessors', 'postprocessor_args', 'outtmpl'):
+            opts.pop(key, None)
+        opts.update({
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['all', '-live_chat', '-danmaku'],
+            'ignore_no_formats_error': True,
+            'socket_timeout': 15,
+            'retries': 1,
+            'extractor_retries': 1,
+        })
+        # Avoid building hundreds of translated tracks; use the spoken language.
+        extractor_args = {key: dict(value) for key, value in
+                          (opts.get('extractor_args') or {}).items()}
+        youtube_args = extractor_args.setdefault('youtube', {})
+        youtube_args['skip'] = list(dict.fromkeys([
+            *youtube_args.get('skip', []), 'translated_subs',
+        ]))
+        opts['extractor_args'] = extractor_args
+        self._apply_url_specific_options(url, opts)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info or info.get('is_live') or info.get('_type') in {'playlist', 'multi_video'}:
+                    return None
+                title = (video_info or {}).get('title') or info.get('title') or 'unknown'
+                duration = float((video_info or {}).get('duration') or info.get('duration') or 0)
+                for language, kind, track in subtitle_candidates(info)[:6]:
+                    try:
+                        data = track.get('data')
+                        if data is None:
+                            headers = {**(info.get('http_headers') or {}),
+                                       **(track.get('http_headers') or {})}
+                            with ydl.urlopen(Request(track['url'], headers=headers)) as response:
+                                payload = response.read(8 * 1024 * 1024 + 1)
+                            if len(payload) > 8 * 1024 * 1024:
+                                raise ValueError('subtitle response too large')
+                            data = payload.decode('utf-8-sig')
+                        text = subtitles_to_text(data, track['ext'], duration)
+                        logger.info('使用%s字幕，语言: %s；跳过音频下载和模型转录', kind, language)
+                        return SubtitleTranscript(text, title, language, kind)
+                    except Exception as exc:
+                        # Signed subtitle URLs can contain credentials; don't log them.
+                        logger.info('字幕不可用 (%s)，尝试其他字幕轨', type(exc).__name__)
+                        if getattr(exc, 'status', None) == 429:
+                            break
+        except Exception as exc:
+            logger.info('字幕查询失败 (%s)，回退音频转录', type(exc).__name__)
+        return None
 
     def get_video_info(self, url: str) -> dict:
         """

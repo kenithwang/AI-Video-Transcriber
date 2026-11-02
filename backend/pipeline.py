@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, Optional
 from .runtime_diagnostics import diagnosed, phase
 from .video_processor import VideoProcessor
 from .obsidian_transcriber import ObsidianTranscriber
+from .transcription_checkpoint import TranscriptionCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ async def process_video(
     download_url: Optional[str] = None,
 ) -> dict:
     """
-    Simplified processing pipeline used by CLI: download video, transcribe audio, and write raw/transcript files.
+    Save available captions, falling back to audio download and transcription.
 
     Args:
         video_info: 预获取的视频元数据（可选），避免重复调用 yt-dlp。
@@ -119,48 +120,65 @@ async def process_video(
             seg_final = 28800
 
     checkpoint_root = temp_dir / ".transcription_checkpoints"
-    transcriber = ObsidianTranscriber(
-        segment_seconds=seg_final,
-        parallelism=parallelism,
-        checkpoint_root=checkpoint_root,
-    )
+    transcriber = None
+    audio_path = None
+    subtitle = None
     warnings: list[str] = []
 
     try:
-        # 1) Download + convert
-        status.update({"progress": 10, "message": "downloading video..."})
-        await emit(status)
-        with phase("download_convert"):
-            audio_path, video_title = await video_processor.download_and_convert(
-                download_url or url,
-                work_dir,
-                video_info=video_info,
+        prefer_subtitles = os.getenv("SUBTITLES_FIRST", "1").strip().lower() not in {"0", "false", "no", "off"}
+        # Direct podcast media URLs have no subtitle tracks.
+        if prefer_subtitles and not download_url:
+            status.update({"progress": 5, "message": "checking available subtitles..."})
+            await emit(status)
+            try:
+                subtitle = await asyncio.to_thread(
+                    video_processor.get_subtitle_transcript, url, video_info=video_info,
+                )
+            except Exception as exc:
+                logger.info("字幕查询失败 (%s)，回退音频转录", type(exc).__name__)
+
+        if subtitle:
+            raw_script, detected_language = subtitle.text, subtitle.language
+            video_title = subtitle.title
+            status.update({"progress": 80, "message": f"using {subtitle.kind} subtitles ({subtitle.language})"})
+            await emit(status)
+        else:
+            status.update({"progress": 10, "message": "downloading audio for transcription..."})
+            await emit(status)
+            with phase("download_convert"):
+                audio_path, video_title = await video_processor.download_and_convert(
+                    download_url or url,
+                    work_dir,
+                    video_info=video_info,
+                )
+
+            status.update({"progress": 35, "message": "audio downloaded; transcribing..."})
+            await emit(status)
+            # Construct the cloud client only when audio transcription is needed.
+            transcriber = ObsidianTranscriber(
+                segment_seconds=seg_final,
+                parallelism=parallelism,
+                checkpoint_root=checkpoint_root,
             )
 
-        status.update({"progress": 35, "message": "video downloaded; transcribing..."})
-        await emit(status)
+            def _do_transcribe():
+                return transcriber.transcribe(Path(audio_path), checkpoint_key=url)
 
-        # 2) Transcribe
-        # OpenAI 云端转写（同步调用，封装为线程避免阻塞）
-        import asyncio as _asyncio
-
-        def _do_transcribe():
-            return transcriber.transcribe(Path(audio_path), checkpoint_key=url)
-
-        raw_script, detected_language, transcribe_warnings = await _asyncio.to_thread(_do_transcribe)
-        warnings.extend(transcribe_warnings)
+            raw_script, detected_language, transcribe_warnings = await asyncio.to_thread(_do_transcribe)
+            warnings.extend(transcribe_warnings)
 
         safe_title = _sanitize_title_for_filename(video_title)
         script_with_title = f"# {video_title}\n\n{raw_script}\n\nsource: {url}\n"
 
-        # detected_language 已由云端返回；如无则保持 None
-
-        # 4) Persist files
-        # transcript file
+        # Publish the complete transcript before clearing any audio checkpoint.
         transcript_filename = f"transcript_{safe_title}_{short_id}.md"
         transcript_path = temp_dir / transcript_filename
         await _write_file(transcript_path, script_with_title)
-        transcriber.clear_checkpoint(url)
+        if transcriber is not None:
+            transcriber.clear_checkpoint(url)
+        else:
+            TranscriptionCheckpoint(checkpoint_root, url).clear()
     except BaseException:
         if not keep_audio:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -168,7 +186,9 @@ async def process_video(
 
     # Optional cleanup of downloaded audio and this job's private work directory.
     audio_deleted = False
-    if not keep_audio:
+    if audio_path is None:
+        shutil.rmtree(work_dir, ignore_errors=True)
+    elif not keep_audio:
         try:
             Path(audio_path).unlink(missing_ok=True)
             audio_deleted = True
@@ -202,6 +222,8 @@ async def process_video(
         "short_id": short_id,
         "audio_file": None if audio_deleted else audio_path,
         "audio_deleted": audio_deleted,
+        "transcript_source": "subtitles" if subtitle else "audio",
+        "subtitle_type": subtitle.kind if subtitle else None,
         "warnings": warnings,
     }
 
