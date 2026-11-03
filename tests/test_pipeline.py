@@ -186,5 +186,51 @@ class SubtitlePipelineTests(unittest.TestCase):
             self.assertTrue(checkpoint.manifest_path.exists())
 
 
+class AtomicPersistenceTests(unittest.TestCase):
+    def test_atomic_write_accepts_maximum_length_ascii_and_chinese_names(self):
+        for name in ("a" * 252 + ".md", "中" * 84 + ".md"):
+            with self.subTest(name_bytes=len(name.encode())), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / name
+                asyncio.run(pipeline._write_file(path, "完整内容"))
+                self.assertEqual("完整内容", path.read_text(encoding="utf-8"))
+                self.assertEqual([path], list(Path(tmp).iterdir()))
+
+    def test_failed_replace_preserves_existing_transcript_and_cleans_temp_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transcript.md"
+            path.write_text("original", encoding="utf-8")
+            with patch.object(pipeline.os, "replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    asyncio.run(pipeline._write_file(path, "replacement"))
+            self.assertEqual("original", path.read_text(encoding="utf-8"))
+            self.assertEqual([path], list(Path(tmp).iterdir()))
+
+    def test_long_video_titles_save_from_subtitles_and_manual_transcript(self):
+        title = "超长中文标题" * 80
+        for source in ("subtitles", "manual"):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if source == "subtitles":
+                    processor = Mock(spec=FakeVideoProcessor)
+                    processor.get_subtitle_transcript.return_value = SubtitleTranscript(
+                        "完整字幕正文", title, "zh-cn", "manual",
+                    )
+                    with patch.dict("os.environ", {"SUBTITLES_FIRST": "1"}), \
+                         patch.object(pipeline, "VideoProcessor", return_value=processor), \
+                         patch.object(pipeline, "ObsidianTranscriber") as model:
+                        result = asyncio.run(pipeline.process_video("https://video.test", root))
+                    model.assert_not_called()
+                    processor.download_and_convert.assert_not_called()
+                else:
+                    result = asyncio.run(pipeline.process_transcript_input(
+                        "完整字幕正文", root, video_title=title,
+                    ))
+                path = root / result["transcript_file"]
+                self.assertLessEqual(len(path.name.encode()), 255)
+                self.assertIn(title, path.read_text(encoding="utf-8"))
+                self.assertIn("完整字幕正文", path.read_text(encoding="utf-8"))
+                self.assertFalse(list(root.glob("*.tmp")))
+
+
 if __name__ == "__main__":
     unittest.main()

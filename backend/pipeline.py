@@ -26,7 +26,9 @@ def _create_emitter(on_update: Optional[Callable[[dict], Awaitable[None]]]):
 @diagnosed("persist")
 async def _write_file(path: Path, content: str) -> None:
     """异步、原子地写入文件，避免断电留下半份转录。"""
-    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    # The final name may already be near NAME_MAX. Use a short independent
+    # name in the same directory to preserve atomic replacement on that volume.
+    temp_path = path.with_name(f".transcript-{uuid.uuid4().hex}.tmp")
 
     def _write_and_replace() -> None:
         try:
