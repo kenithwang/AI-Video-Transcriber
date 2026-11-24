@@ -15,11 +15,11 @@ from backend.ai_client import (
 
 
 class AiClientTests(unittest.TestCase):
-    def test_default_model_is_openrouter_gemini_37_flash(self) -> None:
+    def test_default_model_is_openrouter_gemini_4_neon(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENROUTER_MODEL", None)
-            self.assertEqual("google/gemini-3.7-flash", DEFAULT_MODEL)
-            self.assertEqual("google/gemini-3.7-flash", get_model_name())
+            self.assertEqual("google/gemini-4-neon", DEFAULT_MODEL)
+            self.assertEqual("google/gemini-4-neon", get_model_name())
 
     def test_normalize_openrouter_finish_reasons(self) -> None:
         self.assertEqual("STOP", normalize_finish_reason("stop"))
@@ -54,7 +54,7 @@ class AiClientTests(unittest.TestCase):
         self.assertEqual("hello speaker", result.text)
         self.assertEqual("STOP", result.finish_reason)
         payload = session.post.call_args.kwargs["json"]
-        self.assertEqual("google/gemini-3.7-flash", payload["model"])
+        self.assertEqual("google/gemini-4-neon", payload["model"])
         user = payload["messages"][1]["content"]
         audio_part = next(part for part in user if part["type"] == "input_audio")
         self.assertEqual("mp3", audio_part["input_audio"]["format"])

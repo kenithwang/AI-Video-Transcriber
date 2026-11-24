@@ -15,7 +15,7 @@ import requests
 
 from .runtime_diagnostics import diagnosed, file_size, phase
 
-DEFAULT_MODEL = "google/gemini-3.7-flash"
+DEFAULT_MODEL = "google/gemini-4-neon"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 600
 RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
